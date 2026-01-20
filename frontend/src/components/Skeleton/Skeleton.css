@@ -1,0 +1,38 @@
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    #161b22 0%,
+    #21262d 50%,
+    #161b22 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-card {
+  animation: fadeInUp 0.4s ease-out backwards;
+}
+
+.skeleton-table {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

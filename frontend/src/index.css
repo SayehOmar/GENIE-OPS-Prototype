@@ -1,3 +1,185 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+    * {
+        border-color: #30363d;
+    }
+
+    body {
+        background-color: #0d1117;
+        color: #c9d1d9;
+        font-family: 'Inter', system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Removed the problematic @apply dark; */
+}
+
+@layer components {
+
+    /* Buttons */
+    .btn {
+        @apply px-4 py-2 rounded-lg font-medium transition-all duration-300 ease-out;
+        transform: translateY(0);
+    }
+
+    .btn:hover {
+        transform: translateY(-1px);
+    }
+
+    .btn:active {
+        transform: translateY(0);
+    }
+
+    .btn-primary {
+        background-color: #58a6ff;
+        @apply text-white shadow-lg shadow-blue-500/20;
+    }
+
+    .btn-primary:hover {
+        background-color: #79c0ff;
+        @apply shadow-xl shadow-blue-500/30;
+    }
+
+    .btn-secondary {
+        background-color: #161b22;
+        color: #c9d1d9;
+        border: 1px solid #30363d;
+    }
+
+    .btn-secondary:hover {
+        background-color: #30363d;
+        border-color: #58a6ff;
+    }
+
+    .btn-danger {
+        background-color: #f85149;
+        @apply text-white shadow-lg shadow-red-500/20;
+    }
+
+    .btn-danger:hover {
+        @apply opacity-90 shadow-xl shadow-red-500/30;
+    }
+
+    /* Cards */
+    .card {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        @apply rounded-xl p-6 transition-all duration-300;
+        animation: fadeInUp 0.4s ease-out;
+    }
+
+    .card:hover {
+        border-color: #58a6ff;
+        @apply shadow-lg shadow-blue-500/10;
+    }
+
+    /* Inputs */
+    .input {
+        @apply w-full px-4 py-2.5 rounded-lg transition-all duration-300;
+        background-color: #0d1117;
+        border: 1px solid #30363d;
+        color: #c9d1d9;
+    }
+
+    .input::placeholder {
+        color: #8b949e;
+    }
+
+    .input:focus {
+        @apply outline-none ring-2 border-transparent;
+        --tw-ring-color: #58a6ff;
+        transform: scale(1.01);
+    }
+
+    .label {
+        @apply block text-sm font-medium mb-2;
+        color: #c9d1d9;
+    }
+
+    /* Skeleton */
+    .skeleton {
+        @apply animate-pulse;
+        background: linear-gradient(90deg,
+                #161b22 0%,
+                #21262d 50%,
+                #161b22 100%);
+        background-size: 200% 100%;
+        animation: shimmer 1.5s infinite;
+    }
+
+    /* Page transitions */
+    .page-enter {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    .page-enter-active {
+        opacity: 1;
+        transform: translateY(0);
+        transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+    }
+}
+
+@layer utilities {
+
+    /* Animations */
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    @keyframes shimmer {
+        0% {
+            background-position: -200% 0;
+        }
+
+        100% {
+            background-position: 200% 0;
+        }
+    }
+
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateX(-20px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+
+    .animate-fade-in {
+        animation: fadeInUp 0.4s ease-out;
+    }
+
+    .animate-slide-in {
+        animation: slideIn 0.3s ease-out;
+    }
+
+    .delay-100 {
+        animation-delay: 100ms;
+    }
+
+    .delay-200 {
+        animation-delay: 200ms;
+    }
+
+    .delay-300 {
+        animation-delay: 300ms;
+    }
+}

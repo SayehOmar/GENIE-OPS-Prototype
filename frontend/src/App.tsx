@@ -1,16 +1,25 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import Layout from './components/Layout/Layout';
+import Dashboard from './pages/Dashboard';
+import SaaSList from './pages/SaaSList';
+import SaaSForm from './pages/SaaSForm';
+import Submissions from './pages/Submissions';
+
 function App() {
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold text-gray-800 mb-4">
-          GENIE OPS Prototype
-        </h1>
-        <p className="text-gray-600">
-          React + Vite + TypeScript + Tailwind CSS
-        </p>
-      </div>
-    </div>
-  )
+    <BrowserRouter>
+      <Layout>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/saas" element={<SaaSList />} />
+          <Route path="/saas/new" element={<SaaSForm />} />
+          <Route path="/saas/:id/edit" element={<SaaSForm />} />
+          <Route path="/submissions" element={<Submissions />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Layout>
+    </BrowserRouter>
+  );
 }
 
-export default App
+export default App;

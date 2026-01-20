@@ -1,14 +1,38 @@
 """
 FastAPI entry point
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.workflow.manager import get_workflow_manager
+from app.utils.logger import logger
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup and shutdown events
+    """
+    # Startup
+    logger.info("Starting GENIE OPS API...")
+    workflow_manager = get_workflow_manager()
+    await workflow_manager.start()
+    logger.info("Workflow manager started")
+    
+    yield
+    
+    # Shutdown
+    logger.info("Shutting down GENIE OPS API...")
+    await workflow_manager.stop()
+    logger.info("Workflow manager stopped")
+
 
 app = FastAPI(
     title="GENIE OPS API",
     description="Automated SaaS form submission system",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS middleware
