@@ -1,0 +1,76 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules/
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Python
+backend/venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Storage/Uploads (keep directory structure, ignore contents)
+backend/storage/logos/*
+!backend/storage/logos/.gitkeep
+frontend/storage/logos/*
+!frontend/storage/logos/.gitkeep
+
+# Test coverage
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Playwright
+playwright-report/
+.playwright/
+test-results/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Build artifacts
+*.pyc
+*.pyo
+*.pyd

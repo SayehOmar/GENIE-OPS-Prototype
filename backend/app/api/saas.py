@@ -1,0 +1,81 @@
+"""
+SaaS-related API routes
+"""
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List
+from app.db.crud import get_saas_list, get_saas_by_id, create_saas, update_saas, delete_saas
+from app.db.models import SAAS, SAASCreate, SAASUpdate
+from app.db.session import get_db
+from app.core.security import get_current_user
+
+router = APIRouter()
+
+
+@router.get("/", response_model=List[SAAS])
+async def list_saas(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get all SaaS entries
+    """
+    return await get_saas_list(db)
+
+
+@router.get("/{saas_id}", response_model=SAAS)
+async def get_saas(
+    saas_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get a specific SaaS entry by ID
+    """
+    saas = await get_saas_by_id(db, saas_id)
+    if not saas:
+        raise HTTPException(status_code=404, detail="SaaS entry not found")
+    return saas
+
+
+@router.post("/", response_model=SAAS)
+async def create_saas_entry(
+    saas_data: SAASCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Create a new SaaS entry
+    """
+    return await create_saas(db, saas_data)
+
+
+@router.put("/{saas_id}", response_model=SAAS)
+async def update_saas_entry(
+    saas_id: int,
+    saas_data: SAASUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Update an existing SaaS entry
+    """
+    saas = await update_saas(db, saas_id, saas_data)
+    if not saas:
+        raise HTTPException(status_code=404, detail="SaaS entry not found")
+    return saas
+
+
+@router.delete("/{saas_id}")
+async def delete_saas_entry(
+    saas_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Delete a SaaS entry
+    """
+    success = await delete_saas(db, saas_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="SaaS entry not found")
+    return {"message": "SaaS entry deleted successfully"}
