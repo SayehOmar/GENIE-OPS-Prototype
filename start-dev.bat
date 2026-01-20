@@ -24,6 +24,11 @@ if not exist "frontend\node_modules" (
     cd frontend
     call npm install
     cd ..
+) else (
+    echo Checking frontend dependencies...
+    cd frontend
+    call npm install
+    cd ..
 )
 
 REM Start Backend Server in a new window
