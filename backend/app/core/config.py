@@ -26,9 +26,11 @@ class Settings(BaseSettings):
     STORAGE_PATH: str = "./storage"
     LOGOS_PATH: str = "./storage/logos"
     
-    # AI/LLM
-    OPENAI_API_KEY: str = ""
-    LLM_MODEL: str = "gpt-4"
+    # AI/LLM (Ollama)
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    LLM_MODEL: str = "llama3.2"  # Ollama model name (llama3.2, mistral, qwen, etc.)
+    LLM_TEMPERATURE: float = 0.1  # Low temperature for consistent structured output
+    LLM_USE_OPENAI_COMPATIBLE: bool = True  # Use OpenAI-compatible endpoint
     
     # Automation
     PLAYWRIGHT_HEADLESS: bool = True
