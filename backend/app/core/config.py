@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     
     # Database
-    DATABASE_URL: str = "sqlite:///./genie_ops.db"
+    # PostgreSQL connection string format: postgresql://user:password@localhost/dbname
+    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/genie_ops"
     
     # Security
     SECRET_KEY: str = "your-secret-key-change-in-production"

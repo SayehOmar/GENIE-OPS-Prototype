@@ -1,0 +1,180 @@
+===============================
+GENIEOPS – BUILD CHECKLIST
+SaaS Directory Submission Agent
+===============================
+
+PHASE 0 – PRODUCT & SCOPE
+[x] Define MVP scope (what is IN / what is OUT)
+[x] Decide supported directory types (simple forms only)
+[x] Define submission statuses:
+    - SUBMITTED
+    - PENDING
+    - APPROVED
+    - FAILED
+
+--------------------------------
+
+PHASE 1 – SYSTEM ARCHITECTURE
+[x] Define overall architecture (Frontend / Backend / Automation / AI)
+[x] Decide communication flow between components
+[x] Decide where Playwright runs (backend service)
+[x] Decide how LLM is called (sync / async)
+[ ] Create architecture diagram (draw.io)
+
+Architecture Layers:
+- Layer 1: AI Form Reader (Brain) - Understand page layout, detect form fields
+- Layer 2: Browser Automation (Hands) - Playwright for clicking/typing
+- Layer 3: Workflow Manager (Control Center) - Run submissions at scale
+
+--------------------------------
+
+PHASE 2 – DATABASE DESIGN (PostgreSQL)
+[ ] Design `users` table (optional for MVP)
+[x] Design `saas_products` table
+  [ ] Add `category` field
+  [ ] Add `contact_email` field
+[x] Design `directories` table
+[x] Design `submissions` table
+  [ ] Add `directory_id` foreign key
+  [ ] Ensure status includes: pending, submitted, approved, failed
+[x] Define relationships (FKs)
+[x] Decide status enum values
+[x] Plan retry counters & timestamps
+[ ] Switch from SQLite to PostgreSQL
+
+--------------------------------
+
+PHASE 3 – BACKEND API (FastAPI)
+[x] Setup FastAPI project structure
+[x] Setup database connection (SQLAlchemy) - Currently SQLite, needs PostgreSQL
+[x] Create auth system (simple JWT or session)
+[x] Create API: Create / Update SaaS
+  [ ] Include category and contact_email fields
+[x] Create API: Add / List directories
+[ ] Create API: Start submission job (triggers workflow for multiple directories)
+[x] Create API: Get submission statuses
+[ ] Create API: Retry failed submissions
+[ ] Create API: Get submission statistics (success rate, counts by status)
+[x] Add logging & error handling
+
+--------------------------------
+
+PHASE 4 – AI FORM READER (BRAIN)
+[x] Decide LLM provider (OpenAI / Claude / other)
+[ ] Write prompt for form field detection (name, URL, description, email, category, logo)
+[ ] Extract form HTML with Playwright
+[ ] Send HTML to LLM for analysis
+[ ] Parse LLM JSON response (form structure, field types, selectors)
+[ ] Validate selectors before use
+[ ] Handle unknown / missing fields gracefully
+[ ] Map SaaS data to detected form fields intelligently
+
+--------------------------------
+
+PHASE 5 – BROWSER AUTOMATION (HANDS)
+[x] Setup Playwright (headless mode)
+[x] Open directory website
+[ ] Detect submission page or button (navigate to form)
+[ ] Locate form element(s) using AI-detected selectors
+[ ] Fill text inputs (name, url, email, description, category)
+[ ] Upload logo file (handle file input)
+[ ] Submit form (click submit button)
+[ ] Wait for confirmation / redirect
+[ ] Capture success or error messages
+[ ] Detect CAPTCHA presence (safety feature)
+[ ] Take screenshots for debugging
+
+--------------------------------
+
+PHASE 6 – WORKFLOW MANAGER (Control Center)
+[ ] Integrate `schedule` Python library for task scheduling
+[ ] Create submission loop over directories (queue management)
+[ ] Skip already-submitted directories (check status before processing)
+[ ] Implement retry logic (max attempts, exponential backoff)
+[ ] Handle timeouts & crashes gracefully
+[ ] Update submission status in DB (pending → submitted/approved/failed)
+[ ] Store error messages for debugging
+[ ] Allow resume after failure (continue from last successful submission)
+[ ] Track success rate (statistics)
+[ ] Add rate limiting between submissions (avoid spam)
+[ ] Log all automation events
+Note: Basic workflow structure exists in submitter.py, needs full implementation
+
+--------------------------------
+
+PHASE 7 – FRONTEND (REACT)
+[x] Setup React project (Vite + TypeScript + Tailwind CSS)
+[ ] Create SaaS setup form (SaaSForm.jsx)
+  [ ] Fields: name, website URL, description, category, logo upload, contact email
+[ ] Create directory management UI
+  [ ] Add directory (name, URL)
+  [ ] List directories
+  [ ] Select directories for submission
+[ ] Create "Start Submission" button (triggers workflow)
+[ ] Create submissions status table (Submissions.jsx)
+  [ ] Show: Directory name, Status, Submitted date, Error messages
+[ ] Show status badges (Submitted / Pending / Approved / Failed)
+[ ] Add retry button for failed entries
+[ ] Create Dashboard (Dashboard.jsx)
+  [ ] Show statistics: Total submitted, Pending approvals, Approved, Failed
+  [ ] Show success rate
+  [ ] Recent submissions list
+Note: Pages created (Dashboard.jsx, SaaSForm.jsx, Submissions.jsx) but need full implementation
+
+--------------------------------
+
+PHASE 8 – STATUS & MONITORING
+[x] Define clear success signals (submitted status after form submission)
+[ ] Detect pending approval cases (status remains "submitted" until approval)
+[ ] Detect approval confirmation (basic - manual check or periodic verification)
+[ ] Track submission timestamps (created_at, submitted_at)
+[ ] Show progress indicators (frontend: progress bar, backend: logs)
+[ ] Log automation events (all steps logged)
+[ ] Track success rate metrics
+[ ] Display real-time submission status updates
+
+--------------------------------
+
+PHASE 9 – SAFETY & LIMITS
+[ ] Add rate limiting between submissions (delay between directory submissions)
+[ ] Avoid duplicate submissions (check if already submitted to directory)
+[ ] Stop on CAPTCHA detection (detect and pause, notify user)
+[ ] Allow manual override (admin can force retry or skip)
+[ ] Add "use responsibly" warning (UI message about ethical use)
+[ ] Implement submission validation (verify data before submission)
+[ ] Add timeout limits (prevent hanging on slow sites)
+
+--------------------------------
+
+PHASE 10 – POLISH & DELIVERY
+[x] Clean project structure
+[ ] Add README.md (How it works, architecture overview)
+[ ] Add architecture diagram (draw.io or mermaid)
+[ ] Add setup instructions (environment setup, dependencies, database)
+[ ] Document API endpoints
+[ ] Add code comments and docstrings
+[ ] Add demo screenshots / video (optional)
+[ ] Prepare explanation for reviewers (technical approach, decisions)
+[ ] Test end-to-end workflow
+
+--------------------------------
+
+FINAL CHECK
+[ ] MVP works end-to-end on at least 2 directories
+[ ] Code is readable and commented
+[ ] Architecture is clear (3-layer: Brain, Hands, Control Center)
+[ ] System can be extended later
+[ ] All input fields supported (name, URL, description, category, logo, email)
+[ ] Status tracking works (Submitted / Pending / Approved / Failed)
+[ ] Workflow manager handles queue and retries
+[ ] Frontend displays all required information
+[ ] Safety features implemented (rate limiting, CAPTCHA detection)
+
+KEY REQUIREMENTS FROM CONTEXT:
+✓ ReactJS + FastAPI + Playwright + PostgreSQL
+✓ LLM for form field detection
+✓ Schedule library for workflow management
+✓ Input: SaaS name, URL, description, category, logo, contact email, directory URLs
+✓ Output: Dashboard tracking submitted/pending/approved listings
+
+===============================

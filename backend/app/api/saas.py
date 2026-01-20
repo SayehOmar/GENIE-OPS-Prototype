@@ -20,7 +20,7 @@ async def list_saas(
     """
     Get all SaaS entries
     """
-    return await get_saas_list(db)
+    return get_saas_list(db)
 
 
 @router.get("/{saas_id}", response_model=SAAS)
@@ -32,7 +32,7 @@ async def get_saas(
     """
     Get a specific SaaS entry by ID
     """
-    saas = await get_saas_by_id(db, saas_id)
+    saas = get_saas_by_id(db, saas_id)
     if not saas:
         raise HTTPException(status_code=404, detail="SaaS entry not found")
     return saas
@@ -47,7 +47,7 @@ async def create_saas_entry(
     """
     Create a new SaaS entry
     """
-    return await create_saas(db, saas_data)
+    return create_saas(db, saas_data)
 
 
 @router.put("/{saas_id}", response_model=SAAS)
@@ -60,7 +60,7 @@ async def update_saas_entry(
     """
     Update an existing SaaS entry
     """
-    saas = await update_saas(db, saas_id, saas_data)
+    saas = update_saas(db, saas_id, saas_data)
     if not saas:
         raise HTTPException(status_code=404, detail="SaaS entry not found")
     return saas
@@ -75,7 +75,7 @@ async def delete_saas_entry(
     """
     Delete a SaaS entry
     """
-    success = await delete_saas(db, saas_id)
+    success = delete_saas(db, saas_id)
     if not success:
         raise HTTPException(status_code=404, detail="SaaS entry not found")
     return {"message": "SaaS entry deleted successfully"}

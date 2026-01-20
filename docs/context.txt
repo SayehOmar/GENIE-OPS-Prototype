@@ -1,0 +1,99 @@
+Development Assessment
+Let's build the future together
+First of all: thank you  We've received a lot of portfolios and honestly,
+the level is impressive. So we're using this short coding assessment to
+help us choose the right fit.
+This is not about perfection. It's about vision, technical approach,
+originality, and how you think as a developer.
+The work you'll do here is real. The winning code will actually be used by
+the company and the developer behind it will join us full-time.
+ö The Assessment (Build a SaaS Directory Submission Agent)
+Build an automated SaaS directory submission system that submits your SaaS to hundreds of directories without manual work.
+Company website: www.genie-ops.com
+What It Does
+The system:
+Opens directory websites
+Fills submission forms
+Uploads your SaaS info
+Submits listings
+Tracks submission status
+Repeats this across many sites
+Result: You save dozens of hours and scale distribution.
+Core Workflow
+Directory List → Open Website → Detect Form → Fill SaaS Data → Submit → Save Status (Submitted / Pending / Approved)
+Simple Architecture
+Layer 1 — AI Form Reader (Brain)
+Purpose: Understand page layout and detect form fields (name, URL, description, email)
+Examples:
+Browser-use
+Agentic Browser
+Vision-based LLM agents
+Layer 2 — Browser Automation (Hands)
+Purpose: Actually click and type
+Tools:
+Playwright (recommended)
+Selenium
+Handles:
+Navigation
+Input fields
+Button clicks
+File uploads
+Layer 3 — Workflow Manager (Control Center)
+Purpose: Run submissions at scale
+Tool: schedule Python Library
+Manages:
+Directory queue
+Retry failed submissions
+Save logs
+Track success rate
+Input Data (One-Time Setup)
+You provide:
+SaaS name
+Website URL
+Description
+Category
+Logo
+Contact email
+List of directory URLs
+Output Dashboard
+Tracks:
+Submitted sites
+Pending approvals
+Approved listings
+í Technical Direction (Very Important)
+We are looking for:
+Clean, maintainable code
+Smart automation logic
+Scalable architecture
+Creative problem-solving (even bold approaches)
+Technical Requirements
+ReactJs + FastAPI + Playwright/Selenium + PostgreSQL
+LLM API KEY (you can use any LLM based on the use case for form detection)
+This is not a coding tutorial exercise.
+This is about translating a vision into working code.
+⏳ Timeline
+ö Deadline: Next Friday
+m Decision: Friday
+  Start date: If all goes well - next Monday
+a What Happens Next?
+The developer whose work stands out the most will:
+Join us full-time
+See this code shipped and used
+Become the technical pillar of the company
+No code thrown away.
+No <test that goes nowhere=.
+This is real.
+Final Thought
+This is not a "magic submit everywhere" tool.
+It's a scalable submission assistant.
+Used correctly:
+Saves time
+Increases distribution
+Supports SEO strategy
+Used blindly:
+Creates spam footprint
+Risks domain trust
+If you have questions, feel free to ask.
+Otherwise surprise us ✨
+We’re excited to see what you create.
+www.genie-ops.com
