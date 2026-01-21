@@ -3,6 +3,7 @@
 ## Task Requirements
 
 Our form reader needs to:
+
 1. **Parse HTML structure** - Understand form elements, inputs, labels
 2. **Extract field properties** - Type, name, ID, placeholder, required status
 3. **Infer field purpose** - Determine if field is for name, email, URL, description, etc.
@@ -16,6 +17,7 @@ Our form reader needs to:
 **Best for: HTML form analysis and structured output**
 
 **Pros:**
+
 - ✅ Excellent at structured JSON output (critical for our use case)
 - ✅ Strong understanding of technical content (HTML, CSS)
 - ✅ Good at inferring field purposes from context
@@ -23,6 +25,7 @@ Our form reader needs to:
 - ✅ Reliable field extraction
 
 **Cons:**
+
 - ⚠️ Slightly larger than llama3.2 (but worth it for accuracy)
 
 **Use when:** You want the best balance of accuracy and speed
@@ -36,12 +39,14 @@ Our form reader needs to:
 **Best for: Technical tasks and code analysis**
 
 **Pros:**
+
 - ✅ Designed specifically for technical/code tasks
 - ✅ Excellent with HTML/CSS/structured data
 - ✅ Strong JSON generation
 - ✅ Fast and efficient (~4GB RAM)
 
 **Cons:**
+
 - ⚠️ May be overkill (designed for coding, not just analysis)
 
 **Use when:** You want maximum technical accuracy
@@ -55,12 +60,14 @@ Our form reader needs to:
 **Best for: Fast testing and low-resource environments**
 
 **Pros:**
+
 - ✅ Very fast inference
 - ✅ Low memory usage (~2GB RAM)
 - ✅ Good structured output (decent JSON)
 - ✅ Quick responses
 
 **Cons:**
+
 - ⚠️ Less accurate field extraction
 - ⚠️ May miss some form fields
 - ⚠️ Struggles with complex forms
@@ -76,11 +83,13 @@ Our form reader needs to:
 **Best for: Balanced quality and speed**
 
 **Pros:**
+
 - ✅ Good balance of quality and speed
 - ✅ Decent structured output
 - ✅ Reliable performance
 
 **Cons:**
+
 - ⚠️ Not specialized for technical tasks
 - ⚠️ May not be as accurate as qwen2.5
 
@@ -95,10 +104,12 @@ Our form reader needs to:
 **Best for: Maximum quality (overkill for this task)**
 
 **Pros:**
+
 - ✅ Highest quality output
 - ✅ Best understanding of context
 
 **Cons:**
+
 - ❌ Slower inference
 - ❌ Higher memory usage (~7GB RAM)
 - ❌ Overkill for structured extraction tasks
@@ -122,11 +133,13 @@ Our form reader needs to:
 ## Recommendation
 
 **For production use:** **qwen2.5:7b**
+
 - Best balance of accuracy and speed
 - Excellent structured output
 - Reliable field extraction
 
 **For testing/development:** **llama3.2:3b**
+
 - Fast iteration
 - Low resource usage
 - Good enough for testing
@@ -134,16 +147,19 @@ Our form reader needs to:
 ## Quick Start
 
 1. Pull the recommended model:
+
    ```bash
    ollama pull qwen2.5:7b
    ```
 
 2. Update your `.env`:
+
    ```env
    LLM_MODEL=qwen2.5:7b
    ```
 
 3. Test it:
+
    ```bash
    ollama run qwen2.5:7b "Analyze this form and return JSON: <form><input name='email'/><input name='name'/></form>"
    ```
@@ -151,6 +167,7 @@ Our form reader needs to:
 ## Switching Models
 
 You can easily switch models by:
+
 1. Pulling a different model: `ollama pull <model-name>`
 2. Updating `.env`: `LLM_MODEL=<model-name>`
 3. Restarting the backend

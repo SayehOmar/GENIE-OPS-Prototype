@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     
     # AI/LLM (Ollama)
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    LLM_MODEL: str = "qwen2.5:7b"  # Recommended: qwen2.5:7b for HTML form analysis
-    # Alternatives: llama3.2:3b (fast), deepseek-coder:6.7b (technical), mistral:7b (balanced)
+    LLM_MODEL: str = "llama3.2:3b"  # Fast model for HTML form analysis (~2GB RAM)
+    # Alternatives: qwen2.5:7b (best quality), deepseek-coder:6.7b (technical), mistral:7b (balanced)
     LLM_TEMPERATURE: float = 0.1  # Low temperature for consistent structured output
     LLM_USE_OPENAI_COMPATIBLE: bool = True  # Use OpenAI-compatible endpoint
     

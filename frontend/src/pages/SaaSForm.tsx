@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+// @ts-ignore - JS module
 import { getSaaSById, createSaaS, updateSaaS } from '../api/saas';
+// @ts-ignore - JS module
 import { getDirectories } from '../api/directories';
+// @ts-ignore - JS module
 import { startSubmissionJob } from '../api/jobs';
 
 export default function SaaSForm() {
@@ -20,7 +23,6 @@ export default function SaaSForm() {
 
   const [directories, setDirectories] = useState([]);
   const [selectedDirectories, setSelectedDirectories] = useState<number[]>([]);
-  const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {

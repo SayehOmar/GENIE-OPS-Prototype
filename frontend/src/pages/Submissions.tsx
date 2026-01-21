@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
+// @ts-ignore - JS module
 import { getSubmissions, retrySubmission } from '../api/submissions';
+// @ts-ignore - JS module
 import { getSaaSList } from '../api/saas';
+// @ts-ignore - JS module
 import { getDirectories } from '../api/directories';
+// @ts-ignore - JS module
 import { processSubmission } from '../api/jobs';
 import { SkeletonTable } from '../components/Skeleton';
 
@@ -12,16 +16,17 @@ interface Submission {
   status: string;
   submitted_at: string | null;
   error_message: string | null;
+  form_data: string | null;
   retry_count: number;
   created_at: string;
-  saas?: { name: string };
-  directory?: { name: string; url: string };
+  updated_at: string | null;
+  saas?: { name: string; url: string; category: string };
+  directory?: { name: string; url: string; description: string };
 }
 
 export default function Submissions() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [saasList, setSaaSList] = useState<any[]>([]);
-  const [directories, setDirectories] = useState<any[]>([]);
   const [filter, setFilter] = useState({ saasId: '', status: '' });
   const [loading, setLoading] = useState(true);
 
@@ -34,7 +39,7 @@ export default function Submissions() {
   async function loadData() {
     try {
       const [subs, saas, dirs] = await Promise.all([
-        getSubmissions(
+        (getSubmissions as any)(
           filter.saasId ? parseInt(filter.saasId) : null,
           null
         ),
@@ -56,7 +61,6 @@ export default function Submissions() {
 
       setSubmissions(filtered);
       setSaaSList(saas);
-      setDirectories(dirs);
       setLoading(false);
     } catch (error) {
       console.error('Failed to load submissions:', error);
@@ -157,25 +161,28 @@ export default function Submissions() {
 
       {/* Submissions Table */}
       {loading ? (
-        <SkeletonTable rows={5} columns={7} />
+        <SkeletonTable rows={5} columns={10} />
       ) : (
         <div className="card overflow-x-auto animate-fade-in delay-200">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-dark-border">
-              <th className="text-left py-3 px-4 text-sm font-semibold text-dark-text-muted">SaaS Product</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-dark-text-muted">Directory</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-dark-text-muted">Status</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-dark-text-muted">Retries</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-dark-text-muted">Submitted At</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-dark-text-muted">Error</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-dark-text-muted">Actions</th>
+            <tr className="border-b border-[#30363d]">
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">ID</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">SaaS Product</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">Directory</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">Status</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">Retries</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">Created At</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">Submitted At</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">Last Updated</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">Error</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-[#8b949e]">Actions</th>
             </tr>
           </thead>
           <tbody>
             {submissions.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-dark-text-muted">
+                <td colSpan={10} className="py-8 text-center text-[#8b949e]">
                   No submissions found
                 </td>
               </tr>
@@ -183,11 +190,29 @@ export default function Submissions() {
               submissions.map((submission) => (
                 <tr
                   key={submission.id}
-                  className="border-b border-dark-border hover:bg-dark-border/50 transition-colors"
+                  className="border-b border-[#30363d] hover:bg-[#30363d]/50 transition-colors"
                 >
                   <td className="py-3 px-4">
-                    <div className="font-medium text-white">
-                      {submission.saas?.name || `SaaS #${submission.saas_id}`}
+                    <span className="text-sm text-[#8b949e] font-mono">#{submission.id}</span>
+                  </td>
+                  <td className="py-3 px-4">
+                    <div>
+                      <div className="font-medium text-white">
+                        {submission.saas?.name || `SaaS #${submission.saas_id}`}
+                      </div>
+                      {submission.saas?.category && (
+                        <span className="text-xs text-[#8b949e]">{submission.saas.category}</span>
+                      )}
+                      {submission.saas?.url && (
+                        <a
+                          href={submission.saas.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-[#58a6ff] hover:underline block mt-1"
+                        >
+                          {submission.saas.url}
+                        </a>
+                      )}
                     </div>
                   </td>
                   <td className="py-3 px-4">
@@ -200,33 +225,82 @@ export default function Submissions() {
                           href={submission.directory.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-sm text-dark-accent hover:underline"
+                          className="text-sm text-[#58a6ff] hover:underline block"
                         >
                           {submission.directory.url}
                         </a>
+                      )}
+                      {submission.directory?.description && (
+                        <p className="text-xs text-[#8b949e] mt-1 line-clamp-1">
+                          {submission.directory.description}
+                        </p>
                       )}
                     </div>
                   </td>
                   <td className="py-3 px-4">
                     {getStatusBadge(submission.status)}
                   </td>
-                  <td className="py-3 px-4 text-dark-text-muted">
-                    {submission.retry_count}
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[#8b949e]">{submission.retry_count}</span>
+                      {submission.retry_count > 0 && (
+                        <span className="text-xs text-yellow-400" title="Retry attempts">⚠️</span>
+                      )}
+                    </div>
                   </td>
-                  <td className="py-3 px-4 text-dark-text-muted text-sm">
+                  <td className="py-3 px-4 text-[#8b949e] text-sm">
+                    {submission.created_at
+                      ? new Date(submission.created_at).toLocaleDateString()
+                      : '-'}
+                    <br />
+                    <span className="text-xs">
+                      {submission.created_at
+                        ? new Date(submission.created_at).toLocaleTimeString()
+                        : ''}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-[#8b949e] text-sm">
                     {submission.submitted_at
-                      ? new Date(submission.submitted_at).toLocaleString()
+                      ? (
+                          <>
+                            {new Date(submission.submitted_at).toLocaleDateString()}
+                            <br />
+                            <span className="text-xs">
+                              {new Date(submission.submitted_at).toLocaleTimeString()}
+                            </span>
+                          </>
+                        )
+                      : '-'}
+                  </td>
+                  <td className="py-3 px-4 text-[#8b949e] text-sm">
+                    {submission.updated_at
+                      ? (
+                          <>
+                            {new Date(submission.updated_at).toLocaleDateString()}
+                            <br />
+                            <span className="text-xs">
+                              {new Date(submission.updated_at).toLocaleTimeString()}
+                            </span>
+                          </>
+                        )
                       : '-'}
                   </td>
                   <td className="py-3 px-4">
                     {submission.error_message ? (
-                      <span className="text-sm text-red-400" title={submission.error_message}>
-                        {submission.error_message.length > 50
-                          ? submission.error_message.substring(0, 50) + '...'
-                          : submission.error_message}
-                      </span>
+                      <div className="group relative">
+                        <span className="text-sm text-red-400 cursor-help">
+                          {submission.error_message.length > 30
+                            ? submission.error_message.substring(0, 30) + '...'
+                            : submission.error_message}
+                        </span>
+                        <div className="absolute left-0 top-full mt-2 hidden group-hover:block z-10 bg-[#161b22] border border-[#30363d] rounded-lg p-3 shadow-lg max-w-xs">
+                          <p className="text-sm text-red-400 whitespace-pre-wrap">
+                            {submission.error_message}
+                          </p>
+                        </div>
+                      </div>
                     ) : (
-                      <span className="text-dark-text-muted">-</span>
+                      <span className="text-[#8b949e]">-</span>
                     )}
                   </td>
                   <td className="py-3 px-4">
@@ -235,6 +309,7 @@ export default function Submissions() {
                         <button
                           onClick={() => handleProcess(submission.id)}
                           className="btn btn-primary text-xs px-3 py-1"
+                          title="Process this submission now"
                         >
                           Process
                         </button>
@@ -243,8 +318,25 @@ export default function Submissions() {
                         <button
                           onClick={() => handleRetry(submission.id)}
                           className="btn btn-secondary text-xs px-3 py-1"
+                          title="Retry this submission"
                         >
                           Retry
+                        </button>
+                      )}
+                      {submission.form_data && (
+                        <button
+                          onClick={() => {
+                            try {
+                              const formData = JSON.parse(submission.form_data || '{}');
+                              alert('Form Data:\n' + JSON.stringify(formData, null, 2));
+                            } catch (e) {
+                              alert('Form Data:\n' + submission.form_data);
+                            }
+                          }}
+                          className="btn btn-secondary text-xs px-2 py-1"
+                          title="View form data"
+                        >
+                          📋
                         </button>
                       )}
                     </div>

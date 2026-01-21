@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+// @ts-ignore - JS module
 import { getSaaSList, deleteSaaS } from '../api/saas';
+// @ts-ignore - JS module
 import { startSubmissionJob } from '../api/jobs';
+// @ts-ignore - JS module
 import { getDirectories } from '../api/directories';
 import { SkeletonList } from '../components/Skeleton';
 
