@@ -12,6 +12,7 @@ from app.core.security import get_current_user
 router = APIRouter()
 
 
+@router.get("", response_model=List[SAAS])  # Remove trailing slash to avoid redirect
 @router.get("/", response_model=List[SAAS])
 async def list_saas(
     db: Session = Depends(get_db)
@@ -36,6 +37,7 @@ async def get_saas(
     return saas
 
 
+@router.post("", response_model=SAAS)  # Remove trailing slash to avoid redirect
 @router.post("/", response_model=SAAS)
 async def create_saas_entry(
     saas_data: SAASCreate,

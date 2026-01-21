@@ -1,15 +1,17 @@
 """
 Database models
 """
+
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.session import Base
 
 
+# SQLAlchemy ORM Models (must be defined before Pydantic models to avoid naming conflicts)
 class SAAS(Base):
     __tablename__ = "saas"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     url = Column(String, nullable=False)
@@ -19,13 +21,13 @@ class SAAS(Base):
     logo_path = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
     submissions = relationship("Submission", back_populates="saas")
 
 
 class Directory(Base):
     __tablename__ = "directories"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     url = Column(String, nullable=False)
@@ -35,7 +37,7 @@ class Directory(Base):
 
 class Submission(Base):
     __tablename__ = "submissions"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     saas_id = Column(Integer, ForeignKey("saas.id"), nullable=False)
     directory_id = Column(Integer, ForeignKey("directories.id"), nullable=False)
@@ -46,9 +48,16 @@ class Submission(Base):
     retry_count = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
     saas = relationship("SAAS", back_populates="submissions")
     directory = relationship("Directory")
+
+
+# Store ORM model references before Pydantic models shadow them
+# These are used in CRUD operations to avoid naming conflicts
+_SAAS_ORM = SAAS
+_Directory_ORM = Directory
+_Submission_ORM = Submission
 
 
 # Pydantic models for request/response
@@ -83,7 +92,7 @@ class SAAS(SAASBase):
     id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -97,7 +106,7 @@ class DirectoryBase(BaseModel):
 class Directory(DirectoryBase):
     id: int
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -128,6 +137,6 @@ class Submission(SubmissionBase):
     retry_count: int = 0
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True

@@ -15,7 +15,11 @@ class SubmissionWorkflow:
     
     def __init__(self):
         self.browser = BrowserAutomation()
-        self.form_reader = FormReader()
+        try:
+            self.form_reader = FormReader()
+        except Exception as e:
+            logger.warning(f"FormReader initialization failed: {e}. Some features may be disabled.")
+            self.form_reader = None
     
     async def submit_to_directory(
         self, 
@@ -64,7 +68,12 @@ class SubmissionWorkflow:
             
             # Step 4: Get form HTML and analyze with AI
             html_content = await self.browser.get_page_content()
-            form_structure = await self.form_reader.analyze_form(html_content)
+            
+            if not self.form_reader:
+                logger.warning("FormReader not available. Skipping AI form analysis.")
+                form_structure = {"fields": [], "error": "Ollama not available"}
+            else:
+                form_structure = await self.form_reader.analyze_form(html_content)
             
             if form_structure.get("error"):
                 logger.error(f"Form analysis failed: {form_structure.get('error')}")
@@ -83,7 +92,24 @@ class SubmissionWorkflow:
                 }
             
             # Step 5: Map SaaS data to form fields
-            mapped_data = await self.form_reader.map_data_to_form(form_structure, saas_data)
+            if not self.form_reader:
+                logger.warning("FormReader not available. Using basic field mapping.")
+                # Basic fallback mapping without AI
+                mapped_data = {}
+                for field in form_structure.get("fields", []):
+                    field_name = field.get("name", "").lower()
+                    if "name" in field_name or "title" in field_name:
+                        mapped_data[field.get("selector")] = saas_data.get("name", "")
+                    elif "url" in field_name or "website" in field_name or "link" in field_name:
+                        mapped_data[field.get("selector")] = saas_data.get("url", "")
+                    elif "email" in field_name or "mail" in field_name:
+                        mapped_data[field.get("selector")] = saas_data.get("contact_email", "")
+                    elif "description" in field_name or "desc" in field_name:
+                        mapped_data[field.get("selector")] = saas_data.get("description", "")
+                    elif "category" in field_name:
+                        mapped_data[field.get("selector")] = saas_data.get("category", "")
+            else:
+                mapped_data = await self.form_reader.map_data_to_form(form_structure, saas_data)
             
             if not mapped_data:
                 logger.warning("No fields could be mapped")

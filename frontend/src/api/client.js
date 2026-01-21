@@ -5,7 +5,9 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000
  * Base fetch wrapper with error handling
  */
 async function apiRequest(endpoint, options = {}) {
-  const url = `${API_BASE_URL}${endpoint}`;
+  // Remove trailing slash to avoid redirect issues
+  const cleanEndpoint = endpoint.replace(/\/$/, '');
+  const url = `${API_BASE_URL}${cleanEndpoint}`;
   
   const config = {
     headers: {
@@ -13,6 +15,7 @@ async function apiRequest(endpoint, options = {}) {
       ...options.headers,
     },
     ...options,
+    redirect: 'follow', // Follow redirects but handle CORS properly
   };
 
   try {

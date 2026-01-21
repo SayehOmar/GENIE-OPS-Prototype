@@ -5,9 +5,16 @@ Uses Ollama (local LLM) to analyze forms and extract field information
 import json
 import re
 from typing import Dict, List, Optional, Any
-import ollama
 from app.core.config import settings
 from app.utils.logger import logger
+
+# Make Ollama import optional - backend can run without it
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+    logger.warning("Ollama module not found. AI form reading features will be disabled.")
 
 
 class FormReader:
@@ -21,8 +28,13 @@ class FormReader:
         self.model = settings.LLM_MODEL
         self.temperature = settings.LLM_TEMPERATURE
         self.use_openai_compatible = settings.LLM_USE_OPENAI_COMPATIBLE
+        self.client = None
         
-        # Initialize Ollama client
+        # Initialize Ollama client only if available
+        if not OLLAMA_AVAILABLE:
+            logger.warning("Ollama not available. FormReader initialized but AI features disabled.")
+            return
+            
         try:
             # Test connection
             self.client = ollama.Client(host=self.base_url)
