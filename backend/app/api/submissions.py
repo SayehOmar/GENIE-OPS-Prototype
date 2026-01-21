@@ -24,8 +24,7 @@ router = APIRouter()
 async def list_submissions(
     saas_id: Optional[int] = Query(None, description="Filter by SaaS ID"),
     directory_id: Optional[int] = Query(None, description="Filter by Directory ID"),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Get all submissions, optionally filtered by saas_id or directory_id
@@ -36,8 +35,7 @@ async def list_submissions(
 @router.get("/{submission_id}", response_model=Submission)
 async def get_submission(
     submission_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Get a specific submission by ID
@@ -51,8 +49,7 @@ async def get_submission(
 @router.post("/", response_model=Submission)
 async def create_submission_entry(
     submission_data: SubmissionCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Create a new submission
@@ -64,8 +61,7 @@ async def create_submission_entry(
 async def update_submission_entry(
     submission_id: int,
     submission_data: SubmissionUpdate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Update an existing submission
@@ -79,8 +75,7 @@ async def update_submission_entry(
 @router.delete("/{submission_id}")
 async def delete_submission_entry(
     submission_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Delete a submission
@@ -94,8 +89,7 @@ async def delete_submission_entry(
 @router.get("/stats/summary")
 async def get_submission_stats(
     saas_id: Optional[int] = Query(None, description="Filter statistics by SaaS ID"),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Get submission statistics (counts by status, success rate)
@@ -106,8 +100,7 @@ async def get_submission_stats(
 @router.post("/{submission_id}/retry")
 async def retry_submission(
     submission_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Retry a failed submission

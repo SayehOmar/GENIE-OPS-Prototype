@@ -54,7 +54,7 @@ export default function SaaSList() {
     }
 
     try {
-      await startSubmissionJob(saasId, selectedDirectories);
+      await (startSubmissionJob as any)(saasId, selectedDirectories);
       alert('Submission job started!');
       setSelectedSaaS(null);
       setSelectedDirectories([]);

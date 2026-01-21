@@ -47,7 +47,6 @@ async def start_submission_job(
     job_request: StartJobRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
 ):
     """
     Start a submission job for a SaaS product across multiple directories
@@ -125,7 +124,6 @@ async def start_submission_job(
 async def get_job_status(
     saas_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
 ):
     """
     Get submission job status for a SaaS product
@@ -157,7 +155,6 @@ async def process_submission(
     submission_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
 ):
     """
     Process a single submission by executing the workflow
@@ -252,7 +249,7 @@ async def process_submission(
 
 
 @router.get("/workflow/status")
-async def get_workflow_status(current_user: dict = Depends(get_current_user)):
+async def get_workflow_status():
     """
     Get the current status of the workflow manager
     """
@@ -261,7 +258,7 @@ async def get_workflow_status(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/workflow/process-pending")
-async def trigger_processing(current_user: dict = Depends(get_current_user)):
+async def trigger_processing():
     """
     Manually trigger processing of pending submissions
     """
@@ -271,9 +268,7 @@ async def trigger_processing(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/workflow/retry-failed")
-async def retry_failed_submissions(
-    max_age_hours: int = 24, current_user: dict = Depends(get_current_user)
-):
+async def retry_failed_submissions(max_age_hours: int = 24):
     """
     Retry failed submissions older than max_age_hours
     """

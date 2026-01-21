@@ -20,8 +20,7 @@ router = APIRouter()
 
 @router.get("/", response_model=List[Directory])
 async def list_directories(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Get all directories
@@ -32,8 +31,7 @@ async def list_directories(
 @router.get("/{directory_id}", response_model=Directory)
 async def get_directory(
     directory_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Get a specific directory by ID
@@ -47,8 +45,7 @@ async def get_directory(
 @router.post("/", response_model=Directory)
 async def create_directory_entry(
     directory_data: DirectoryBase,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Create a new directory
@@ -60,8 +57,7 @@ async def create_directory_entry(
 async def update_directory_entry(
     directory_id: int,
     directory_data: DirectoryBase,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Update an existing directory
@@ -75,8 +71,7 @@ async def update_directory_entry(
 @router.delete("/{directory_id}")
 async def delete_directory_entry(
     directory_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Delete a directory
