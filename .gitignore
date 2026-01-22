@@ -52,6 +52,8 @@ __pycache__/
 # Storage/Uploads (keep directory structure, ignore contents)
 backend/storage/logos/*
 !backend/storage/logos/.gitkeep
+backend/storage/screenshots/
+backend/test/reports/
 frontend/storage/logos/*
 !frontend/storage/logos/.gitkeep
 

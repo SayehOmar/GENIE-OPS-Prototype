@@ -4,6 +4,8 @@ Handles queue management, scheduling, and batch processing of submissions
 """
 import asyncio
 import threading
+import os
+import time
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
@@ -212,15 +214,32 @@ class WorkflowManager:
             
             # Process submission
             workflow = SubmissionWorkflow()
+            
+            # Create screenshot path for this submission
+            screenshot_dir = "./storage/screenshots"
+            os.makedirs(screenshot_dir, exist_ok=True)
+            screenshot_path = os.path.join(screenshot_dir, f"submission_{submission_id}_{int(time.time())}.png")
+            
             result = await workflow.submit_to_directory(
                 directory_url=directory.url,
-                saas_data=saas_data
+                saas_data=saas_data,
+                screenshot_path=screenshot_path
             )
+            
+            # Store form structure and HTML for debugging
+            form_structure = result.get("form_structure", {})
+            form_data_dict = {
+                "form_structure": form_structure,
+                "fields_filled": result.get("fields_filled", 0),
+                "total_fields": result.get("total_fields", 0),
+                "fill_errors": result.get("fill_errors", []),
+                "screenshot_path": screenshot_path if os.path.exists(screenshot_path) else None
+            }
             
             # Update submission based on result
             update_data = {
                 "error_message": None,
-                "form_data": json.dumps(result.get("form_structure", {}))
+                "form_data": json.dumps(form_data_dict)
             }
             
             if result.get("status") == "success":

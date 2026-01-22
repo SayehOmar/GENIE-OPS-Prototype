@@ -1,10 +1,17 @@
 """
 SaaS-related API routes
 """
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-from app.db.crud import get_saas_list, get_saas_by_id, create_saas, update_saas, delete_saas
+from app.db.crud import (
+    get_saas_list,
+    get_saas_by_id,
+    create_saas,
+    update_saas,
+    delete_saas,
+)
 from app.db.models import SAAS, SAASCreate, SAASUpdate
 from app.db.session import get_db
 from app.core.security import get_current_user
@@ -14,9 +21,7 @@ router = APIRouter()
 
 @router.get("", response_model=List[SAAS])  # Remove trailing slash to avoid redirect
 @router.get("/", response_model=List[SAAS])
-async def list_saas(
-    db: Session = Depends(get_db)
-):
+async def list_saas(db: Session = Depends(get_db)):
     """
     Get all SaaS entries
     """
@@ -24,10 +29,7 @@ async def list_saas(
 
 
 @router.get("/{saas_id}", response_model=SAAS)
-async def get_saas(
-    saas_id: int,
-    db: Session = Depends(get_db)
-):
+async def get_saas(saas_id: int, db: Session = Depends(get_db)):
     """
     Get a specific SaaS entry by ID
     """
@@ -39,10 +41,7 @@ async def get_saas(
 
 @router.post("", response_model=SAAS)  # Remove trailing slash to avoid redirect
 @router.post("/", response_model=SAAS)
-async def create_saas_entry(
-    saas_data: SAASCreate,
-    db: Session = Depends(get_db)
-):
+async def create_saas_entry(saas_data: SAASCreate, db: Session = Depends(get_db)):
     """
     Create a new SaaS entry
     """
@@ -51,9 +50,7 @@ async def create_saas_entry(
 
 @router.put("/{saas_id}", response_model=SAAS)
 async def update_saas_entry(
-    saas_id: int,
-    saas_data: SAASUpdate,
-    db: Session = Depends(get_db)
+    saas_id: int, saas_data: SAASUpdate, db: Session = Depends(get_db)
 ):
     """
     Update an existing SaaS entry
@@ -65,10 +62,7 @@ async def update_saas_entry(
 
 
 @router.delete("/{saas_id}")
-async def delete_saas_entry(
-    saas_id: int,
-    db: Session = Depends(get_db)
-):
+async def delete_saas_entry(saas_id: int, db: Session = Depends(get_db)):
     """
     Delete a SaaS entry
     """

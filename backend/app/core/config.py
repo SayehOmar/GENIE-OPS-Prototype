@@ -20,7 +20,11 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:5173",  # Frontend dev server
+        "http://localhost:3000",  # Alternative frontend port
+        "http://localhost:8080",  # Test monitor server
+    ]
     
     # Storage
     STORAGE_PATH: str = "./storage"
@@ -36,6 +40,8 @@ class Settings(BaseSettings):
     # Automation
     PLAYWRIGHT_HEADLESS: bool = True
     PLAYWRIGHT_TIMEOUT: int = 30000
+    # For testing: set to False to see browser in action
+    PLAYWRIGHT_HEADLESS_TEST: bool = False  # Set to False to watch tests fill forms
     
     # Workflow Manager
     WORKFLOW_MAX_CONCURRENT: int = 3  # Max concurrent submissions

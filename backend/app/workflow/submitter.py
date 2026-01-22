@@ -2,6 +2,8 @@
 Workflow orchestration for form submissions
 Coordinates between AI (BRAIN) and Automation (HANDS)
 """
+import os
+import time
 from typing import Dict, Optional
 from app.automation.browser import BrowserAutomation
 from app.ai.form_reader import FormReader
@@ -52,9 +54,14 @@ class SubmissionWorkflow:
             await self.browser.navigate(directory_url)
             
             # Step 2: Detect submission page (may need to click "Submit" link)
-            submission_detected = await self.browser.detect_submission_page()
-            if not submission_detected:
-                logger.warning("Could not detect submission form, proceeding anyway")
+            # Use timeout to prevent hanging on complex pages
+            try:
+                submission_detected = await self.browser.detect_submission_page()
+                if not submission_detected:
+                    logger.warning("Could not detect submission form, proceeding anyway")
+            except Exception as e:
+                logger.warning(f"Error during submission page detection: {e}, proceeding anyway")
+                submission_detected = False
             
             # Step 3: Check for CAPTCHA
             has_captcha = await self.browser.detect_captcha()
@@ -66,48 +73,94 @@ class SubmissionWorkflow:
                     "requires_manual_intervention": True
                 }
             
-            # Step 4: Get form HTML and analyze with AI
+            # Step 4: Get form HTML and analyze with AI or DOM extraction
             html_content = await self.browser.get_page_content()
             
+            # Track if we're using DOM extraction (to skip AI mapping later)
+            using_dom_extraction = False
+            
+            # Try AI analysis first, fallback to DOM extraction
             if not self.form_reader:
-                logger.warning("FormReader not available. Skipping AI form analysis.")
-                form_structure = {"fields": [], "error": "Ollama not available"}
+                logger.warning("FormReader not available. Using DOM-based form extraction.")
+                form_structure = await self.browser.extract_form_fields_dom()
+                using_dom_extraction = True
             else:
                 form_structure = await self.form_reader.analyze_form(html_content)
-            
-            if form_structure.get("error"):
-                logger.error(f"Form analysis failed: {form_structure.get('error')}")
-                return {
-                    "status": "error",
-                    "message": f"Form analysis failed: {form_structure.get('error')}",
-                    "form_structure": form_structure
-                }
+                # If AI analysis fails, fallback to DOM extraction
+                if form_structure.get("error") or not form_structure.get("fields"):
+                    logger.warning("AI form analysis failed or returned no fields. Falling back to DOM extraction.")
+                    dom_structure = await self.browser.extract_form_fields_dom()
+                    if dom_structure.get("fields"):
+                        form_structure = dom_structure
+                        using_dom_extraction = True
+                        logger.info("Using DOM-extracted form structure")
             
             if not form_structure.get("fields"):
-                logger.warning("No form fields detected")
+                logger.warning("No form fields detected after all extraction methods")
                 return {
                     "status": "error",
                     "message": "No form fields detected on page",
                     "form_structure": form_structure
                 }
             
+            # Store form_structure for error handling (before any errors might occur)
+            self._last_form_structure = form_structure
+            
             # Step 5: Map SaaS data to form fields
-            if not self.form_reader:
-                logger.warning("FormReader not available. Using basic field mapping.")
-                # Basic fallback mapping without AI
+            # Use DOM-based mapping if we used DOM extraction OR if AI is not available
+            if using_dom_extraction or not self.form_reader or form_structure.get("error"):
+                logger.warning("FormReader not available or failed. Using enhanced DOM-based field mapping.")
+                # Enhanced fallback mapping using purpose field from DOM extraction
                 mapped_data = {}
                 for field in form_structure.get("fields", []):
-                    field_name = field.get("name", "").lower()
-                    if "name" in field_name or "title" in field_name:
-                        mapped_data[field.get("selector")] = saas_data.get("name", "")
-                    elif "url" in field_name or "website" in field_name or "link" in field_name:
-                        mapped_data[field.get("selector")] = saas_data.get("url", "")
-                    elif "email" in field_name or "mail" in field_name:
-                        mapped_data[field.get("selector")] = saas_data.get("contact_email", "")
-                    elif "description" in field_name or "desc" in field_name:
-                        mapped_data[field.get("selector")] = saas_data.get("description", "")
-                    elif "category" in field_name:
-                        mapped_data[field.get("selector")] = saas_data.get("category", "")
+                    field_name = (field.get("name", "") + " " + field.get("label", "") + " " + field.get("placeholder", "")).lower()
+                    purpose = field.get("purpose", "").lower()
+                    selector = field.get("selector", "")
+                    
+                    if not selector:
+                        continue
+                    
+                    # Use purpose if available, otherwise infer from field name
+                    # Check each field type independently (not elif) to ensure all fields are mapped
+                    mapped = False
+                    
+                    if purpose == "name" or any(kw in field_name for kw in ["name", "title", "company", "product", "business", "app"]):
+                        if saas_data.get("name"):
+                            mapped_data[selector] = saas_data.get("name", "")
+                            logger.debug(f"Mapped name to {selector}")
+                            mapped = True
+                    
+                    if not mapped and (purpose == "url" or any(kw in field_name for kw in ["url", "website", "site", "link", "homepage", "domain", "web"])):
+                        if saas_data.get("url"):
+                            mapped_data[selector] = saas_data.get("url", "")
+                            logger.debug(f"Mapped URL to {selector}")
+                            mapped = True
+                    
+                    if not mapped and (purpose == "email" or any(kw in field_name for kw in ["email", "mail", "contact", "e-mail"])):
+                        if saas_data.get("contact_email"):
+                            mapped_data[selector] = saas_data.get("contact_email", "")
+                            logger.debug(f"Mapped email to {selector}")
+                            mapped = True
+                    
+                    if not mapped and (purpose == "description" or any(kw in field_name for kw in ["description", "desc", "about", "details", "info", "summary", "overview"])):
+                        if saas_data.get("description"):
+                            mapped_data[selector] = saas_data.get("description", "")
+                            logger.debug(f"Mapped description to {selector}")
+                            mapped = True
+                    
+                    if not mapped and (purpose == "category" or any(kw in field_name for kw in ["category", "tag", "tags", "type", "industry", "sector"])):
+                        if saas_data.get("category"):
+                            mapped_data[selector] = saas_data.get("category", "")
+                            logger.debug(f"Mapped category to {selector}")
+                            mapped = True
+                    
+                    if not mapped and (purpose == "logo" or any(kw in field_name for kw in ["logo", "image", "picture", "photo", "icon", "upload"])):
+                        if saas_data.get("logo_path"):
+                            mapped_data[selector] = saas_data.get("logo_path", "")
+                            logger.debug(f"Mapped logo to {selector}")
+                            mapped = True
+                
+                logger.info(f"Mapped {len(mapped_data)} fields using enhanced fallback mapping")
             else:
                 mapped_data = await self.form_reader.map_data_to_form(form_structure, saas_data)
             
@@ -120,6 +173,37 @@ class SubmissionWorkflow:
                 }
             
             # Step 6: Fill form
+            # Add analysis method to mapped data (for tracking in form submission)
+            analysis_method = "dom" if using_dom_extraction else "ai"
+            
+            # Set analysis method in hidden field using JavaScript (more reliable)
+            try:
+                await self.browser.page.evaluate("""
+                    (method) => {
+                        const field = document.getElementById('analysis_method') || 
+                                    document.querySelector('[name="analysis_method"]');
+                        if (field) {
+                            field.value = method;
+                            console.log('Set analysis_method to:', method);
+                        }
+                    }
+                """, analysis_method)
+                logger.info(f"Set analysis_method hidden field to: {analysis_method}")
+            except Exception as e:
+                logger.warning(f"Failed to set analysis_method field: {e}")
+            
+            # Also add to mapped_data as backup
+            try:
+                method_field = self.browser.page.locator("#analysis_method")
+                if await method_field.count() > 0:
+                    mapped_data["#analysis_method"] = analysis_method
+                else:
+                    method_field = self.browser.page.locator("[name='analysis_method']")
+                    if await method_field.count() > 0:
+                        mapped_data["[name='analysis_method']"] = analysis_method
+            except:
+                pass  # Field might not exist, that's okay
+            
             fill_result = await self.browser.fill_form(
                 mapped_data, 
                 form_structure=form_structure
@@ -130,7 +214,8 @@ class SubmissionWorkflow:
                 return {
                     "status": "error",
                     "message": "Failed to fill any form fields",
-                    "fill_result": fill_result
+                    "fill_result": fill_result,
+                    "form_structure": form_structure  # Include for debugging
                 }
             
             # Step 7: Submit form
@@ -145,7 +230,8 @@ class SubmissionWorkflow:
                 return {
                     "status": "error",
                     "message": "Failed to submit form",
-                    "fill_result": fill_result
+                    "fill_result": fill_result,
+                    "form_structure": form_structure  # Include for debugging
                 }
             
             # Step 8: Wait for confirmation
@@ -156,6 +242,7 @@ class SubmissionWorkflow:
                 await self.browser.take_screenshot(screenshot_path)
             
             # Compile result
+            analysis_method = "dom" if using_dom_extraction else "ai"
             result = {
                 "status": confirmation["status"],
                 "message": confirmation["message"],
@@ -163,7 +250,8 @@ class SubmissionWorkflow:
                 "fields_filled": fill_result["filled_count"],
                 "total_fields": fill_result["total_fields"],
                 "form_structure": form_structure,
-                "fill_errors": fill_result.get("errors", [])
+                "fill_errors": fill_result.get("errors", []),
+                "analysis_method": analysis_method  # Track which method was used
             }
             
             if result["status"] == "success":
@@ -175,11 +263,32 @@ class SubmissionWorkflow:
             
         except Exception as e:
             logger.error(f"Submission workflow failed: {str(e)}", exc_info=True)
-            return {
+            
+            # Take error screenshot for debugging
+            try:
+                error_screenshot_path = f"./storage/screenshots/error_{int(time.time())}.png"
+                os.makedirs(os.path.dirname(error_screenshot_path), exist_ok=True)
+                await self.browser.take_screenshot(error_screenshot_path)
+                logger.info(f"Error screenshot saved to {error_screenshot_path}")
+            except Exception as screenshot_error:
+                logger.warning(f"Failed to take error screenshot: {str(screenshot_error)}")
+            
+            # Include form_structure if available for debugging
+            error_result = {
                 "status": "error",
                 "message": f"Workflow error: {str(e)}",
-                "error_type": type(e).__name__
+                "error_type": type(e).__name__,
+                "error_details": str(e)
             }
+            
+            # Try to include form_structure if we have it
+            try:
+                if hasattr(self, '_last_form_structure'):
+                    error_result["form_structure"] = self._last_form_structure
+            except:
+                pass
+            
+            return error_result
         
         finally:
             await self.browser.close()

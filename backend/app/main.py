@@ -48,13 +48,14 @@ app.add_middleware(
 )
 
 # Include routers
-from app.api import auth, saas, directories, submissions, jobs
+from app.api import auth, saas, directories, submissions, jobs, testing
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(saas.router, prefix="/api/saas", tags=["saas"])
 app.include_router(directories.router, prefix="/api/directories", tags=["directories"])
 app.include_router(submissions.router, prefix="/api/submissions", tags=["submissions"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
+app.include_router(testing.router, prefix="/api/testing", tags=["testing"])
 
 
 @app.get("/")
