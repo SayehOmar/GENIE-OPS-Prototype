@@ -4,7 +4,7 @@ import { SkeletonCard } from '../components/Skeleton';
 // @ts-ignore - JS module
 import { getSaaSList } from '../api/saas';
 // @ts-ignore - JS module
-import { getSubmissionStats, getSubmissions } from '../api/submissions';
+import { getSubmissionStats, getSubmissions, retrySubmission } from '../api/submissions';
 // @ts-ignore - JS module
 import { getDirectories } from '../api/directories';
 // @ts-ignore - JS module
@@ -22,7 +22,13 @@ export default function Dashboard() {
   });
   const [workflowStatus, setWorkflowStatus] = useState<any>(null);
   const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
+  const [failedSubmissions, setFailedSubmissions] = useState<any[]>([]);
+  const [successfulSubmissions, setSuccessfulSubmissions] = useState<any[]>([]);
+  const [saasList, setSaaSList] = useState<any[]>([]);
+  const [directories, setDirectories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState<number | null>(null);
+  const [selectedSubmission, setSelectedSubmission] = useState<any | null>(null);
 
   useEffect(() => {
     loadDashboardData();
@@ -32,7 +38,7 @@ export default function Dashboard() {
 
   async function loadDashboardData() {
     try {
-      const [saasList, directories, submissionStats, workflow, submissions] = await Promise.all([
+      const [saas, dirs, submissionStats, workflow, submissions] = await Promise.all([
         getSaaSList().catch(() => []),
         getDirectories().catch(() => []),
         getSubmissionStats().catch(() => ({ total: 0, by_status: {} })),
@@ -40,9 +46,12 @@ export default function Dashboard() {
         getSubmissions().catch(() => []),
       ]);
 
+      setSaaSList(saas);
+      setDirectories(dirs);
+
       setStats({
-        totalSaaS: saasList.length || 0,
-        totalDirectories: directories.length || 0,
+        totalSaaS: saas.length || 0,
+        totalDirectories: dirs.length || 0,
         totalSubmissions: submissionStats.total || 0,
         pending: submissionStats.by_status?.pending || 0,
         submitted: submissionStats.by_status?.submitted || 0,
@@ -50,13 +59,38 @@ export default function Dashboard() {
         failed: submissionStats.by_status?.failed || 0,
       });
 
+      // Enrich submissions with SaaS and Directory data
+      const enriched = submissions.map((sub: any) => ({
+        ...sub,
+        saas: saas.find((s: any) => s.id === sub.saas_id),
+        directory: dirs.find((d: any) => d.id === sub.directory_id),
+      }));
+
       // Get recent submissions (last 5)
-      const recent = submissions
+      const recent = enriched
         .sort((a: any, b: any) => 
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         )
         .slice(0, 5);
       setRecentSubmissions(recent);
+
+      // Get failed submissions (for retry section)
+      const failed = enriched
+        .filter((s: any) => s.status === 'failed')
+        .sort((a: any, b: any) => 
+          new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()
+        )
+        .slice(0, 10);
+      setFailedSubmissions(failed);
+
+      // Get successful submissions (submitted + approved)
+      const successful = enriched
+        .filter((s: any) => s.status === 'submitted' || s.status === 'approved')
+        .sort((a: any, b: any) => 
+          new Date(b.submitted_at || b.created_at).getTime() - new Date(a.submitted_at || a.created_at).getTime()
+        )
+        .slice(0, 10);
+      setSuccessfulSubmissions(successful);
 
       setWorkflowStatus(workflow);
       setLoading(false);
@@ -66,10 +100,42 @@ export default function Dashboard() {
     }
   }
 
+  async function handleRetry(submissionId: number) {
+    if (!confirm('Retry this failed submission?')) return;
+
+    setRetrying(submissionId);
+    try {
+      await retrySubmission(submissionId);
+      await loadDashboardData();
+      alert('Submission queued for retry');
+    } catch (error: any) {
+      alert(error.message || 'Failed to retry submission');
+    } finally {
+      setRetrying(null);
+    }
+  }
+
+  function handleViewDetails(submission: any) {
+    setSelectedSubmission(submission);
+  }
+
+  function closeDetailsModal() {
+    setSelectedSubmission(null);
+  }
+
+  function parseFormData(formDataString: string | null) {
+    if (!formDataString) return null;
+    try {
+      return JSON.parse(formDataString);
+    } catch {
+      return null;
+    }
+  }
+
   function calculateSuccessRate() {
-    const { totalSubmissions, failed } = stats;
+    const { totalSubmissions, failed, submitted, approved } = stats;
     if (totalSubmissions === 0) return 0;
-    const successful = totalSubmissions - failed;
+    const successful = submitted + approved;
     return Math.round((successful / totalSubmissions) * 100);
   }
 
@@ -172,16 +238,140 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Failed Submissions with Retry */}
+      {!loading && failedSubmissions.length > 0 && (
+        <div className="card animate-fade-in delay-900 mb-8 border-red-500/20">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+              <span className="text-red-400">❌</span>
+              Failed Submissions ({failedSubmissions.length})
+            </h2>
+            <span className="text-sm text-[#8b949e]">Click Retry to resubmit</span>
+          </div>
+          <div className="space-y-3">
+            {failedSubmissions.map((sub: any, index: number) => (
+              <div
+                key={sub.id}
+                className="flex items-center justify-between p-4 rounded-lg border border-red-500/20 bg-red-500/5 hover:border-red-500/40 transition-colors animate-slide-in cursor-pointer"
+                style={{ animationDelay: `${900 + index * 50}ms` }}
+                onClick={() => handleViewDetails(sub)}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="text-sm text-[#8b949e] font-mono">#{sub.id}</span>
+                    <span className="px-2 py-1 rounded text-xs font-medium bg-red-500/10 text-red-400">
+                      FAILED
+                    </span>
+                    {sub.retry_count > 0 && (
+                      <span className="text-xs text-yellow-400" title="Retry attempts">
+                        {sub.retry_count} retries
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm text-white mb-1">
+                    <strong>{sub.saas?.name || `SaaS #${sub.saas_id}`}</strong>
+                    {' → '}
+                    <strong>{sub.directory?.name || `Directory #${sub.directory_id}`}</strong>
+                  </div>
+                  {sub.error_message && (
+                    <p className="text-xs text-red-400 mt-1 line-clamp-2">
+                      {sub.error_message}
+                    </p>
+                  )}
+                  <p className="text-xs text-[#8b949e] mt-2">
+                    Failed {new Date(sub.updated_at || sub.created_at).toLocaleString()}
+                  </p>
+                  <p className="text-xs text-[#58a6ff] mt-2 font-medium">
+                    Click to view details →
+                  </p>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRetry(sub.id);
+                  }}
+                  disabled={retrying === sub.id}
+                  className="btn btn-secondary text-sm px-4 py-2 ml-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {retrying === sub.id ? (
+                    <span className="flex items-center gap-2">
+                      <span className="animate-spin">⏳</span>
+                      Retrying...
+                    </span>
+                  ) : (
+                    'Retry'
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Successful Submissions */}
+      {!loading && successfulSubmissions.length > 0 && (
+        <div className="card animate-fade-in delay-950 mb-8 border-green-500/20">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+              <span className="text-green-400">✅</span>
+              Successful Submissions ({successfulSubmissions.length})
+            </h2>
+          </div>
+          <div className="space-y-3">
+            {successfulSubmissions.map((sub: any, index: number) => (
+              <div
+                key={sub.id}
+                className="flex items-center justify-between p-4 rounded-lg border border-green-500/20 bg-green-500/5 hover:border-green-500/40 transition-colors animate-slide-in"
+                style={{ animationDelay: `${950 + index * 50}ms` }}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="text-sm text-[#8b949e] font-mono">#{sub.id}</span>
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${
+                      sub.status === 'approved' 
+                        ? 'bg-green-500/10 text-green-400' 
+                        : 'bg-blue-500/10 text-blue-400'
+                    }`}>
+                      {sub.status.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="text-sm text-white mb-1">
+                    <strong>{sub.saas?.name || `SaaS #${sub.saas_id}`}</strong>
+                    {' → '}
+                    <strong>{sub.directory?.name || `Directory #${sub.directory_id}`}</strong>
+                  </div>
+                  {sub.submitted_at && (
+                    <p className="text-xs text-[#8b949e] mt-2">
+                      Submitted {new Date(sub.submitted_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+                {sub.directory?.url && (
+                  <a
+                    href={sub.directory.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-secondary text-sm px-4 py-2 ml-4"
+                  >
+                    View
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Recent Submissions */}
       {!loading && recentSubmissions.length > 0 && (
-        <div className="card animate-fade-in delay-900 mb-8">
+        <div className="card animate-fade-in delay-1000 mb-8">
           <h2 className="text-xl font-semibold text-white mb-4">Recent Submissions</h2>
           <div className="space-y-3">
             {recentSubmissions.map((sub: any, index: number) => (
               <div
                 key={sub.id}
                 className="flex items-center justify-between p-3 rounded-lg border border-[#30363d] hover:border-[#58a6ff] transition-colors animate-slide-in"
-                style={{ animationDelay: `${900 + index * 50}ms` }}
+                style={{ animationDelay: `${1000 + index * 50}ms` }}
               >
                 <div className="flex-1">
                   <div className="flex items-center gap-3">
@@ -194,6 +384,9 @@ export default function Dashboard() {
                     }`}>
                       {sub.status.toUpperCase()}
                     </span>
+                  </div>
+                  <div className="text-sm text-white mt-1">
+                    {sub.saas?.name || `SaaS #${sub.saas_id}`} → {sub.directory?.name || `Directory #${sub.directory_id}`}
                   </div>
                   <p className="text-sm text-[#8b949e] mt-1">
                     Created {new Date(sub.created_at).toLocaleString()}
@@ -238,6 +431,586 @@ export default function Dashboard() {
           </div>
         </div>
       ) : null}
+
+      {/* Submission Details Modal */}
+      {selectedSubmission && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 animate-fade-in"
+          onClick={closeDetailsModal}
+        >
+          <div
+            className="card max-w-4xl w-full max-h-[90vh] overflow-y-auto animate-slide-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-white">
+                Submission Details #{selectedSubmission.id}
+              </h2>
+              <button
+                onClick={closeDetailsModal}
+                className="text-[#8b949e] hover:text-white text-2xl"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Basic Info */}
+            <div className="mb-6 p-4 bg-[#161b22] rounded-lg border border-[#30363d]">
+              <h3 className="text-lg font-semibold text-white mb-3">Submission Information</h3>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-[#8b949e]">SaaS Product:</span>
+                  <p className="text-white font-medium">
+                    {selectedSubmission.saas?.name || `SaaS #${selectedSubmission.saas_id}`}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-[#8b949e]">Directory:</span>
+                  <p className="text-white font-medium">
+                    {selectedSubmission.directory?.name || `Directory #${selectedSubmission.directory_id}`}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-[#8b949e]">Status:</span>
+                  <p className="text-red-400 font-medium">FAILED</p>
+                </div>
+                <div>
+                  <span className="text-[#8b949e]">Retry Count:</span>
+                  <p className="text-white font-medium">{selectedSubmission.retry_count || 0}</p>
+                </div>
+                <div>
+                  <span className="text-[#8b949e]">Failed At:</span>
+                  <p className="text-white">
+                    {new Date(selectedSubmission.updated_at || selectedSubmission.created_at).toLocaleString()}
+                  </p>
+                </div>
+                {selectedSubmission.directory?.url && (
+                  <div>
+                    <span className="text-[#8b949e]">Directory URL:</span>
+                    <a
+                      href={selectedSubmission.directory.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[#58a6ff] hover:underline block"
+                    >
+                      {selectedSubmission.directory.url}
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Workflow Execution Log - Prominent Section */}
+            {(() => {
+              const formData = parseFormData(selectedSubmission.form_data);
+              const errorMsg = selectedSubmission.error_message || '';
+              
+              // Reconstruct workflow steps from available data
+              const workflowSteps = [];
+              
+              // Step 1: Navigation
+              workflowSteps.push({
+                step: 1,
+                name: 'Navigate to Directory',
+                status: 'success',
+                message: `Navigated to ${selectedSubmission.directory?.url || 'directory URL'}`,
+                timestamp: selectedSubmission.created_at
+              });
+              
+              // Step 2: Form Detection
+              if (formData && formData.form_structure) {
+                const fieldCount = formData.total_fields || 0;
+                workflowSteps.push({
+                  step: 2,
+                  name: 'Detect Submission Form',
+                  status: fieldCount > 0 ? 'success' : 'warning',
+                  message: fieldCount > 0 
+                    ? `Form detected with ${fieldCount} fields`
+                    : 'Form detected but no fields found (form may be empty or not fully loaded)',
+                  timestamp: null
+                });
+              } else {
+                workflowSteps.push({
+                  step: 2,
+                  name: 'Detect Submission Form',
+                  status: 'warning',
+                  message: 'Form detection status unknown',
+                  timestamp: null
+                });
+              }
+              
+              // Step 3: Form Analysis
+              if (formData) {
+                const analysisMethod = formData.analysis_method || 'unknown';
+                const methodLabel = analysisMethod === 'ai' ? 'AI (Ollama)' : analysisMethod === 'dom' ? 'DOM Extraction' : 'Unknown';
+                workflowSteps.push({
+                  step: 3,
+                  name: 'Analyze Form Structure',
+                  status: formData.form_structure && formData.form_structure.fields ? 'success' : 'failed',
+                  message: `Analysis method: ${methodLabel}. Detected ${formData.total_fields || 0} fields.`,
+                  timestamp: null
+                });
+              } else {
+                workflowSteps.push({
+                  step: 3,
+                  name: 'Analyze Form Structure',
+                  status: 'failed',
+                  message: 'Form analysis failed - no form structure data available',
+                  timestamp: null
+                });
+              }
+              
+              // Step 4: Field Mapping
+              if (formData && formData.form_structure && formData.form_structure.fields) {
+                const mappedCount = formData.fields_filled || 0;
+                const totalFields = formData.total_fields || 0;
+                workflowSteps.push({
+                  step: 4,
+                  name: 'Map SaaS Data to Form Fields',
+                  status: mappedCount > 0 ? 'success' : 'failed',
+                  message: `Mapped ${mappedCount} out of ${totalFields} fields`,
+                  timestamp: null
+                });
+              } else {
+                workflowSteps.push({
+                  step: 4,
+                  name: 'Map SaaS Data to Form Fields',
+                  status: 'failed',
+                  message: 'Field mapping failed - no form structure available',
+                  timestamp: null
+                });
+              }
+              
+              // Step 5: Fill Form Fields
+              if (formData) {
+                const filledCount = formData.fields_filled || 0;
+                const totalFields = formData.total_fields || 0;
+                const fillErrors = formData.fill_errors || [];
+                
+                if (filledCount === 0) {
+                  workflowSteps.push({
+                    step: 5,
+                    name: 'Fill Form Fields',
+                    status: 'failed',
+                    message: `Failed to fill any fields. ${fillErrors.length} errors occurred.`,
+                    errors: fillErrors,
+                    timestamp: null
+                  });
+                } else if (fillErrors.length > 0) {
+                  workflowSteps.push({
+                    step: 5,
+                    name: 'Fill Form Fields',
+                    status: 'partial',
+                    message: `Filled ${filledCount} out of ${totalFields} fields. ${fillErrors.length} fields failed.`,
+                    errors: fillErrors,
+                    timestamp: null
+                  });
+                } else {
+                  workflowSteps.push({
+                    step: 5,
+                    name: 'Fill Form Fields',
+                    status: 'success',
+                    message: `Successfully filled ${filledCount} out of ${totalFields} fields`,
+                    timestamp: null
+                  });
+                }
+              } else {
+                workflowSteps.push({
+                  step: 5,
+                  name: 'Fill Form Fields',
+                  status: 'failed',
+                  message: 'Field filling failed - no form data available',
+                  timestamp: null
+                });
+              }
+              
+              // Step 6: Submit Form
+              if (errorMsg.toLowerCase().includes('submit')) {
+                workflowSteps.push({
+                  step: 6,
+                  name: 'Submit Form',
+                  status: 'failed',
+                  message: errorMsg,
+                  timestamp: selectedSubmission.updated_at
+                });
+              } else if (formData && formData.fields_filled > 0) {
+                workflowSteps.push({
+                  step: 6,
+                  name: 'Submit Form',
+                  status: 'failed',
+                  message: 'Form submission failed - could not complete submission',
+                  timestamp: selectedSubmission.updated_at
+                });
+              } else {
+                workflowSteps.push({
+                  step: 6,
+                  name: 'Submit Form',
+                  status: 'failed',
+                  message: 'Form submission failed - no fields were filled',
+                  timestamp: selectedSubmission.updated_at
+                });
+              }
+              
+              // Step 7: Verify Submission
+              workflowSteps.push({
+                step: 7,
+                name: 'Verify Submission',
+                status: 'failed',
+                message: 'Submission verification failed - submission was not successful',
+                timestamp: selectedSubmission.updated_at
+              });
+              
+              return (
+                <div className="mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                      <span>📋</span>
+                      Workflow Execution Log
+                    </h3>
+                    {errorMsg && (
+                      <span className="px-3 py-1 rounded-full text-sm font-medium bg-red-500/20 text-red-400 border border-red-500/30">
+                        FAILED
+                      </span>
+                    )}
+                  </div>
+                  
+                  {/* Failure Summary - Show at top */}
+                  {errorMsg && (
+                    <div className="mb-4 p-4 bg-red-500/10 border-2 border-red-500/30 rounded-lg">
+                      <h4 className="font-bold text-red-400 mb-2 flex items-center gap-2">
+                        <span>⚠️</span>
+                        Failure Reason
+                      </h4>
+                      <p className="text-red-300 whitespace-pre-wrap font-medium">{errorMsg}</p>
+                    </div>
+                  )}
+                  
+                  <div className="space-y-3">
+                    {workflowSteps.map((step, idx) => {
+                      const isLast = idx === workflowSteps.length - 1;
+                      const statusColors = {
+                        success: 'bg-green-500/10 border-green-500/20 text-green-400',
+                        partial: 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400',
+                        failed: 'bg-red-500/10 border-red-500/20 text-red-400',
+                        warning: 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'
+                      };
+                      
+                      return (
+                        <div key={idx} className="relative">
+                          {/* Connection Line */}
+                          {!isLast && (
+                            <div className="absolute left-4 top-12 bottom-0 w-0.5 bg-[#30363d]"></div>
+                          )}
+                          
+                          <div className={`p-4 rounded-lg border ${statusColors[step.status as keyof typeof statusColors]}`}>
+                            <div className="flex items-start gap-3">
+                              <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                                step.status === 'success' ? 'bg-green-500/20 text-green-400' :
+                                step.status === 'partial' ? 'bg-yellow-500/20 text-yellow-400' :
+                                step.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                                'bg-yellow-500/20 text-yellow-400'
+                              }`}>
+                                {step.status === 'success' ? '✓' :
+                                 step.status === 'partial' ? '⚠' :
+                                 step.status === 'failed' ? '✗' : '○'}
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <h4 className="font-semibold text-white">
+                                    Step {step.step}: {step.name}
+                                  </h4>
+                                  <span className={`px-2 py-0.5 text-xs rounded font-medium ${
+                                    step.status === 'success' ? 'bg-green-500/20 text-green-400' :
+                                    step.status === 'partial' ? 'bg-yellow-500/20 text-yellow-400' :
+                                    step.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                                    'bg-yellow-500/20 text-yellow-400'
+                                  }`}>
+                                    {step.status.toUpperCase()}
+                                  </span>
+                                </div>
+                                <p className="text-sm text-[#8b949e] mb-2">{step.message}</p>
+                                
+                                {/* Show errors for this step */}
+                                {step.errors && step.errors.length > 0 && (
+                                  <div className="mt-2 p-2 bg-red-500/5 border border-red-500/20 rounded">
+                                    <p className="text-xs font-semibold text-red-400 mb-1">Field Errors:</p>
+                                    <ul className="list-disc list-inside space-y-1">
+                                      {step.errors.slice(0, 5).map((error: any, errIdx: number) => (
+                                        <li key={errIdx} className="text-xs text-red-300">
+                                          {typeof error === 'string' ? error : error.message || JSON.stringify(error)}
+                                        </li>
+                                      ))}
+                                      {step.errors.length > 5 && (
+                                        <li className="text-xs text-[#8b949e]">
+                                          ... and {step.errors.length - 5} more errors
+                                        </li>
+                                      )}
+                                    </ul>
+                                  </div>
+                                )}
+                                
+                                {step.timestamp && (
+                                  <p className="text-xs text-[#8b949e] mt-2">
+                                    {new Date(step.timestamp).toLocaleString()}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Form Analysis Details */}
+            {(() => {
+              const formData = parseFormData(selectedSubmission.form_data);
+              if (!formData) {
+                return null;
+              }
+
+              const formStructure = formData.form_structure || {};
+              const fields = formStructure.fields || [];
+              const fieldsFilled = formData.fields_filled || 0;
+              const totalFields = formData.total_fields || 0;
+              const fillErrors = formData.fill_errors || [];
+              const analysisMethod = formData.analysis_method || 'unknown';
+
+              // Determine which fields were successfully filled
+              const filledFields = new Set<string>();
+              const errorFields = new Map<string, string>();
+
+              // Parse fill errors to identify which fields failed
+              fillErrors.forEach((error: any) => {
+                if (typeof error === 'string') {
+                  // Try to extract selector from error message
+                  const match = error.match(/selector[:\s]+([^\s,]+)/i);
+                  if (match) {
+                    errorFields.set(match[1], error);
+                  }
+                } else if (error.selector) {
+                  errorFields.set(error.selector, error.message || JSON.stringify(error));
+                }
+              });
+
+              // Fields that were filled successfully (not in error list)
+              fields.forEach((field: any) => {
+                const selector = field.selector;
+                if (selector && !errorFields.has(selector)) {
+                  filledFields.add(selector);
+                }
+              });
+
+              return (
+                <>
+                  {/* Summary */}
+                  <div className="mb-6 p-4 bg-[#161b22] rounded-lg border border-[#30363d]">
+                    <h3 className="text-lg font-semibold text-white mb-3">Form Analysis Summary</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <span className="text-[#8b949e] text-sm">Analysis Method:</span>
+                        <p className="text-white font-medium">
+                          {analysisMethod === 'ai' ? 'AI (Ollama)' : analysisMethod === 'dom' ? 'DOM Extraction' : 'Unknown'}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-[#8b949e] text-sm">Total Fields:</span>
+                        <p className="text-white font-medium">{totalFields}</p>
+                      </div>
+                      <div>
+                        <span className="text-[#8b949e] text-sm">Fields Filled:</span>
+                        <p className="text-green-400 font-medium">{fieldsFilled}</p>
+                      </div>
+                      <div>
+                        <span className="text-[#8b949e] text-sm">Fields Failed:</span>
+                        <p className="text-red-400 font-medium">{fillErrors.length}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Successfully Filled Fields */}
+                  {filledFields.size > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold text-green-400 mb-3 flex items-center gap-2">
+                        <span>✅</span>
+                        Successfully Filled Fields ({filledFields.size})
+                      </h3>
+                      <div className="space-y-2">
+                        {fields
+                          .filter((field: any) => filledFields.has(field.selector))
+                          .map((field: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg"
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-sm font-mono text-green-300">{field.selector}</span>
+                                    {field.purpose && (
+                                      <span className="px-2 py-0.5 text-xs rounded bg-green-500/20 text-green-300">
+                                        {field.purpose}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {field.label && (
+                                    <p className="text-sm text-[#8b949e]">Label: {field.label}</p>
+                                  )}
+                                  {field.name && (
+                                    <p className="text-sm text-[#8b949e]">Name: {field.name}</p>
+                                  )}
+                                  {field.type && (
+                                    <p className="text-sm text-[#8b949e]">Type: {field.type}</p>
+                                  )}
+                                </div>
+                                <span className="text-green-400 text-xl">✓</span>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Failed Fields */}
+                  {fillErrors.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold text-red-400 mb-3 flex items-center gap-2">
+                        <span>❌</span>
+                        Failed Fields ({fillErrors.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {fillErrors.map((error: any, idx: number) => {
+                          const errorMsg = typeof error === 'string' ? error : error.message || JSON.stringify(error);
+                          const errorSelector = typeof error === 'object' && error.selector ? error.selector : null;
+                          
+                          // Try to find the field in form structure
+                          const field = errorSelector
+                            ? fields.find((f: any) => f.selector === errorSelector)
+                            : null;
+
+                          return (
+                            <div
+                              key={idx}
+                              className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg"
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  {field ? (
+                                    <>
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-sm font-mono text-red-300">{field.selector}</span>
+                                        {field.purpose && (
+                                          <span className="px-2 py-0.5 text-xs rounded bg-red-500/20 text-red-300">
+                                            {field.purpose}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {field.label && (
+                                        <p className="text-sm text-[#8b949e]">Label: {field.label}</p>
+                                      )}
+                                      {field.name && (
+                                        <p className="text-sm text-[#8b949e]">Name: {field.name}</p>
+                                      )}
+                                      {field.type && (
+                                        <p className="text-sm text-[#8b949e]">Type: {field.type}</p>
+                                      )}
+                                    </>
+                                  ) : errorSelector ? (
+                                    <span className="text-sm font-mono text-red-300">{errorSelector}</span>
+                                  ) : null}
+                                  <p className="text-sm text-red-300 mt-2 whitespace-pre-wrap">{errorMsg}</p>
+                                </div>
+                                <span className="text-red-400 text-xl">✗</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* All Detected Fields */}
+                  {fields.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold text-white mb-3">All Detected Fields ({fields.length})</h3>
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {fields.map((field: any, idx: number) => {
+                          const wasFilled = filledFields.has(field.selector);
+                          const hasError = errorFields.has(field.selector);
+                          
+                          return (
+                            <div
+                              key={idx}
+                              className={`p-3 rounded-lg border ${
+                                wasFilled
+                                  ? 'bg-green-500/5 border-green-500/20'
+                                  : hasError
+                                  ? 'bg-red-500/5 border-red-500/20'
+                                  : 'bg-[#161b22] border-[#30363d]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-sm font-mono text-[#8b949e]">{field.selector || 'N/A'}</span>
+                                {wasFilled && <span className="text-green-400 text-xs">✓ Filled</span>}
+                                {hasError && <span className="text-red-400 text-xs">✗ Error</span>}
+                                {!wasFilled && !hasError && <span className="text-yellow-400 text-xs">○ Not filled</span>}
+                                {field.purpose && (
+                                  <span className="px-2 py-0.5 text-xs rounded bg-[#30363d] text-[#8b949e]">
+                                    {field.purpose}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-[#8b949e] space-y-1">
+                                {field.label && <p>Label: {field.label}</p>}
+                                {field.name && <p>Name: {field.name}</p>}
+                                {field.type && <p>Type: {field.type}</p>}
+                                {field.placeholder && <p>Placeholder: {field.placeholder}</p>}
+                                {field.required !== undefined && (
+                                  <p>Required: {field.required ? 'Yes' : 'No'}</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            {/* Actions */}
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  handleRetry(selectedSubmission.id);
+                  closeDetailsModal();
+                }}
+                disabled={retrying === selectedSubmission.id}
+                className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {retrying === selectedSubmission.id ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="animate-spin">⏳</span>
+                    Retrying...
+                  </span>
+                ) : (
+                  'Retry Submission'
+                )}
+              </button>
+              <button
+                onClick={closeDetailsModal}
+                className="btn btn-secondary"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

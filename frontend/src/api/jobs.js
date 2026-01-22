@@ -49,3 +49,8 @@ export function getSubmissionStats(saasId = null) {
 export function retrySubmission(submissionId) {
   return post(`/api/submissions/${submissionId}/retry`);
 }
+
+// Process all pending submissions
+export function processAllPending() {
+  return post('/api/jobs/process-all', {});
+}

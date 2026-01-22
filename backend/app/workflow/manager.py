@@ -45,6 +45,8 @@ class WorkflowManager:
         self.processing_tasks: Dict[int, asyncio.Task] = {}
         self.scheduler_task: Optional[asyncio.Task] = None
         self.lock = threading.Lock()
+        # Progress tracking: {submission_id: {"status": "analyzing_form", "progress": 25, "message": "..."}}
+        self.progress_tracking: Dict[int, Dict] = {}
         
         logger.info(
             f"WorkflowManager initialized: "
@@ -172,6 +174,14 @@ class WorkflowManager:
             
             logger.info(f"Processing submission {submission_id} (attempt {submission.retry_count + 1})")
             
+            # Initialize progress tracking
+            self.progress_tracking[submission_id] = {
+                "status": "queued",
+                "progress": 0,
+                "message": "Starting submission processing",
+                "started_at": datetime.now().isoformat()
+            }
+            
             # Get SaaS and Directory data
             saas = get_saas_by_id(db, submission.saas_id)
             if not saas:
@@ -212,6 +222,13 @@ class WorkflowManager:
             # Update status to "submitted" (processing)
             update_submission(db, submission_id, SubmissionUpdate(status="submitted"))
             
+            # Update progress: Analyzing form
+            self.progress_tracking[submission_id].update({
+                "status": "analyzing_form",
+                "progress": 20,
+                "message": f"Analyzing form at {directory.url}"
+            })
+            
             # Process submission
             workflow = SubmissionWorkflow()
             
@@ -220,11 +237,25 @@ class WorkflowManager:
             os.makedirs(screenshot_dir, exist_ok=True)
             screenshot_path = os.path.join(screenshot_dir, f"submission_{submission_id}_{int(time.time())}.png")
             
+            # Update progress: Filling form
+            self.progress_tracking[submission_id].update({
+                "status": "filling_form",
+                "progress": 50,
+                "message": "Filling form fields with SaaS data"
+            })
+            
             result = await workflow.submit_to_directory(
                 directory_url=directory.url,
                 saas_data=saas_data,
                 screenshot_path=screenshot_path
             )
+            
+            # Update progress: Submitting
+            self.progress_tracking[submission_id].update({
+                "status": "submitting",
+                "progress": 80,
+                "message": "Submitting form"
+            })
             
             # Store form structure and HTML for debugging
             form_structure = result.get("form_structure", {})
@@ -233,7 +264,8 @@ class WorkflowManager:
                 "fields_filled": result.get("fields_filled", 0),
                 "total_fields": result.get("total_fields", 0),
                 "fill_errors": result.get("fill_errors", []),
-                "screenshot_path": screenshot_path if os.path.exists(screenshot_path) else None
+                "screenshot_path": screenshot_path if os.path.exists(screenshot_path) else None,
+                "analysis_method": result.get("analysis_method", "unknown")  # Include analysis method
             }
             
             # Update submission based on result
@@ -246,31 +278,75 @@ class WorkflowManager:
                 update_data["status"] = "submitted"
                 update_data["submitted_at"] = datetime.now()
                 logger.info(f"Submission {submission_id} completed successfully")
+                # Update progress: Completed
+                self.progress_tracking[submission_id].update({
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Submission completed successfully",
+                    "completed_at": datetime.now().isoformat()
+                })
             elif result.get("status") == "error":
+                error_msg = result.get("message", "Unknown error")
                 # Retry if under max retries
                 if submission.retry_count < self.max_retries - 1:
                     update_data["status"] = "pending"
                     update_data["retry_count"] = submission.retry_count + 1
-                    update_data["error_message"] = f"Retry {update_data['retry_count']}/{self.max_retries}: {result.get('message', 'Unknown error')}"
+                    update_data["error_message"] = f"Retry {update_data['retry_count']}/{self.max_retries}: {error_msg}"
                     logger.info(f"Submission {submission_id} will be retried: {update_data['error_message']}")
+                    # Update progress: Will retry
+                    self.progress_tracking[submission_id].update({
+                        "status": "failed_retry",
+                        "progress": 0,
+                        "message": f"Failed, will retry: {error_msg}"
+                    })
                 else:
                     update_data["status"] = "failed"
-                    update_data["error_message"] = result.get("message", "Unknown error")
+                    update_data["error_message"] = error_msg
                     logger.error(f"Submission {submission_id} failed after {submission.retry_count + 1} attempts")
+                    # Update progress: Failed
+                    self.progress_tracking[submission_id].update({
+                        "status": "failed",
+                        "progress": 0,
+                        "message": f"Failed: {error_msg}",
+                        "completed_at": datetime.now().isoformat()
+                    })
             elif result.get("status") == "captcha_required":
                 # CAPTCHA requires manual intervention, mark as failed
                 update_data["status"] = "failed"
                 update_data["error_message"] = "CAPTCHA detected - manual intervention required"
                 logger.warning(f"Submission {submission_id} requires CAPTCHA")
+                # Update progress: CAPTCHA required
+                self.progress_tracking[submission_id].update({
+                    "status": "captcha_required",
+                    "progress": 0,
+                    "message": "CAPTCHA detected - manual intervention required",
+                    "completed_at": datetime.now().isoformat()
+                })
             else:
                 # Unknown status, mark as failed
+                unknown_status = result.get('status', 'unknown')
                 update_data["status"] = "failed"
-                update_data["error_message"] = f"Unknown status: {result.get('status')}"
-                logger.warning(f"Submission {submission_id} returned unknown status: {result.get('status')}")
+                update_data["error_message"] = f"Unknown status: {unknown_status}"
+                logger.warning(f"Submission {submission_id} returned unknown status: {unknown_status}")
+                # Update progress: Unknown status
+                self.progress_tracking[submission_id].update({
+                    "status": "failed",
+                    "progress": 0,
+                    "message": f"Unknown status: {unknown_status}",
+                    "completed_at": datetime.now().isoformat()
+                })
             
             update_submission(db, submission_id, SubmissionUpdate(**update_data))
         
         except Exception as e:
+            # Update progress: Error
+            if submission_id in self.progress_tracking:
+                self.progress_tracking[submission_id].update({
+                    "status": "error",
+                    "progress": 0,
+                    "message": f"Error: {str(e)}",
+                    "completed_at": datetime.now().isoformat()
+                })
             logger.error(f"Error processing submission {submission_id}: {str(e)}", exc_info=True)
             try:
                 submission = get_submission_by_id(db, submission_id)
@@ -300,6 +376,14 @@ class WorkflowManager:
         
         finally:
             db.close()
+            # Clean up progress tracking after 1 hour
+            if submission_id in self.progress_tracking:
+                # Keep for 1 hour for status queries, then remove
+                pass  # Could add cleanup logic here if needed
+    
+    def get_submission_progress(self, submission_id: int) -> Optional[Dict]:
+        """Get progress for a specific submission"""
+        return self.progress_tracking.get(submission_id)
     
     def _cleanup_task(self, submission_id: int):
         """

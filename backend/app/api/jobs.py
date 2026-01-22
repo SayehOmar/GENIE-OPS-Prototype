@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
+import asyncio
 from app.db.crud import (
     get_saas_by_id,
     get_directory_by_id,
@@ -17,7 +18,7 @@ from app.db.crud import (
     update_submission,
 )
 from app.db.models import Submission, SubmissionCreate, SubmissionUpdate
-from app.db.session import get_db
+from app.db.session import get_db, SessionLocal
 from app.core.security import get_current_user
 from app.workflow.submitter import SubmissionWorkflow
 from app.workflow.manager import get_workflow_manager
@@ -277,3 +278,194 @@ async def retry_failed_submissions(max_age_hours: int = 24):
     return {
         "message": f"Retry process triggered for submissions older than {max_age_hours} hours"
     }
+
+
+@router.post("/process-all")
+async def process_all_pending(
+    limit: Optional[int] = None,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Process all pending submissions immediately
+    """
+    pending = get_submissions(db, status="pending")
+    if limit:
+        pending = pending[:limit]
+
+    if not pending:
+        return {
+            "message": "No pending submissions found",
+            "count": 0,
+            "submission_ids": []
+        }
+
+    submission_ids = [s.id for s in pending]
+
+    # Process in background
+    async def process_all():
+        manager = get_workflow_manager()
+        for submission_id in submission_ids:
+            if submission_id not in manager.processing_tasks or manager.processing_tasks[submission_id].done():
+                task = asyncio.create_task(manager._process_submission(submission_id))
+                manager.processing_tasks[submission_id] = task
+                task.add_done_callback(lambda t, sid=submission_id: manager._cleanup_task(sid))
+                # Small delay between starting tasks
+                await asyncio.sleep(0.5)
+
+    if background_tasks:
+        background_tasks.add_task(process_all)
+        return {
+            "message": f"Processing {len(pending)} pending submissions in background",
+            "count": len(pending),
+            "submission_ids": submission_ids
+        }
+    else:
+        await process_all()
+        return {
+            "message": f"Processed {len(pending)} pending submissions",
+            "count": len(pending),
+            "submission_ids": submission_ids
+        }
+
+
+@router.post("/process-saas/{saas_id}")
+async def process_saas_submissions(
+    saas_id: int,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Process all pending submissions for a specific SaaS product
+    """
+    saas = get_saas_by_id(db, saas_id)
+    if not saas:
+        raise HTTPException(status_code=404, detail="SaaS product not found")
+
+    submissions = get_submissions(db, saas_id=saas_id, status="pending")
+    if not submissions:
+        return {
+            "message": f"No pending submissions found for SaaS: {saas.name}",
+            "count": 0,
+            "submission_ids": []
+        }
+
+    submission_ids = [s.id for s in submissions]
+
+    # Process in background
+    async def process_saas():
+        manager = get_workflow_manager()
+        for submission_id in submission_ids:
+            if submission_id not in manager.processing_tasks or manager.processing_tasks[submission_id].done():
+                task = asyncio.create_task(manager._process_submission(submission_id))
+                manager.processing_tasks[submission_id] = task
+                task.add_done_callback(lambda t, sid=submission_id: manager._cleanup_task(sid))
+                await asyncio.sleep(0.5)
+
+    if background_tasks:
+        background_tasks.add_task(process_saas)
+        return {
+            "message": f"Processing {len(submissions)} submissions for SaaS: {saas.name}",
+            "saas_id": saas_id,
+            "saas_name": saas.name,
+            "count": len(submissions),
+            "submission_ids": submission_ids
+        }
+    else:
+        await process_saas()
+        return {
+            "message": f"Processed {len(submissions)} submissions for SaaS: {saas.name}",
+            "saas_id": saas_id,
+            "saas_name": saas.name,
+            "count": len(submissions),
+            "submission_ids": submission_ids
+        }
+
+
+@router.get("/progress/{submission_id}")
+async def get_submission_progress(submission_id: int):
+    """
+    Get real-time progress for a specific submission
+    """
+    manager = get_workflow_manager()
+    progress = manager.get_submission_progress(submission_id)
+    
+    if not progress:
+        # Check if submission exists and get basic status
+        db = SessionLocal()
+        try:
+            submission = get_submission_by_id(db, submission_id)
+            if not submission:
+                raise HTTPException(status_code=404, detail="Submission not found")
+            
+            return {
+                "submission_id": submission_id,
+                "status": submission.status,
+                "progress": None,
+                "message": f"Status: {submission.status}"
+            }
+        finally:
+            db.close()
+    
+    return {
+        "submission_id": submission_id,
+        **progress
+    }
+
+
+@router.post("/batch-process")
+async def batch_process_submissions(
+    submission_ids: List[int],
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Process multiple submissions by their IDs
+    """
+    if not submission_ids:
+        raise HTTPException(status_code=400, detail="No submission IDs provided")
+
+    # Verify all submissions exist
+    valid_ids = []
+    for submission_id in submission_ids:
+        submission = get_submission_by_id(db, submission_id)
+        if not submission:
+            logger.warning(f"Submission {submission_id} not found, skipping")
+            continue
+        if submission.status not in ["pending", "failed"]:
+            logger.warning(f"Submission {submission_id} is not pending or failed (status: {submission.status}), skipping")
+            continue
+        valid_ids.append(submission_id)
+
+    if not valid_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid submissions to process (all not found or not pending/failed)"
+        )
+
+    # Process in background
+    async def process_batch():
+        manager = get_workflow_manager()
+        for submission_id in valid_ids:
+            if submission_id not in manager.processing_tasks or manager.processing_tasks[submission_id].done():
+                task = asyncio.create_task(manager._process_submission(submission_id))
+                manager.processing_tasks[submission_id] = task
+                task.add_done_callback(lambda t, sid=submission_id: manager._cleanup_task(sid))
+                await asyncio.sleep(0.5)
+
+    if background_tasks:
+        background_tasks.add_task(process_batch)
+        return {
+            "message": f"Processing {len(valid_ids)} submissions in background",
+            "requested": len(submission_ids),
+            "valid": len(valid_ids),
+            "submission_ids": valid_ids
+        }
+    else:
+        await process_batch()
+        return {
+            "message": f"Processed {len(valid_ids)} submissions",
+            "requested": len(submission_ids),
+            "valid": len(valid_ids),
+            "submission_ids": valid_ids
+        }

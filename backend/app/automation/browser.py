@@ -673,6 +673,50 @@ class BrowserAutomation:
                 logger.warning("Page load timeout, proceeding with extraction anyway")
                 # Continue anyway - page might be complex
 
+            # Wait a bit more for dynamic content
+            await self.page.wait_for_timeout(1000)
+
+            # First, check if form exists and wait for it if needed
+            try:
+                # Wait for form to appear (with timeout)
+                await self.page.wait_for_selector("form", timeout=5000)
+                logger.debug("Form element found on page")
+
+                # Also wait for at least one input field to be present (form might be empty)
+                try:
+                    await self.page.wait_for_selector(
+                        "input:not([type='hidden']), textarea, select", timeout=3000
+                    )
+                    logger.debug("Form fields found on page")
+                except PlaywrightTimeoutError:
+                    logger.warning(
+                        "Form found but no visible input fields detected yet, waiting longer..."
+                    )
+                    # Wait a bit more for dynamic content
+                    await self.page.wait_for_timeout(2000)
+            except PlaywrightTimeoutError:
+                logger.warning(
+                    "No form element found, checking for input fields directly"
+                )
+                # Try waiting for any input field instead
+                try:
+                    await self.page.wait_for_selector(
+                        "input:not([type='hidden']), textarea, select", timeout=3000
+                    )
+                    logger.debug("Input fields found on page (no form tag)")
+                except PlaywrightTimeoutError:
+                    logger.error("No form or input fields found on page after waiting")
+                    # Take a screenshot for debugging
+                    try:
+                        debug_screenshot = f"./storage/screenshots/debug_no_form_{int(time.time())}.png"
+                        os.makedirs(os.path.dirname(debug_screenshot), exist_ok=True)
+                        await self.page.screenshot(
+                            path=debug_screenshot, full_page=True
+                        )
+                        logger.info(f"Debug screenshot saved to {debug_screenshot}")
+                    except:
+                        pass
+
             # Extract form fields using JavaScript (with timeout)
             form_data = await self.page.evaluate(
                 """
@@ -685,6 +729,14 @@ class BrowserAutomation:
                     const formElements = mainForm.querySelectorAll('input, textarea, select');
                     
                     formElements.forEach((el, index) => {
+                        // Skip hidden fields (they're not user-fillable)
+                        // But we'll still count them for debugging
+                        const isHidden = el.type === 'hidden';
+                        if (isHidden) {
+                            console.log('Skipping hidden field:', el.name || el.id || 'unnamed');
+                            return;
+                        }
+                        
                         const tagName = el.tagName.toLowerCase();
                         const type = el.type || '';
                         const name = el.name || el.id || '';
@@ -792,6 +844,14 @@ class BrowserAutomation:
                         (forms[0].id ? `#${forms[0].id}` : (forms[0].name ? `form[name="${forms[0].name}"]` : 'form')) :
                         'body';
                     
+                    // Log diagnostic info
+                    console.log('Form extraction complete:', {
+                        formCount: forms.length,
+                        totalElements: formElements.length,
+                        extractedFields: fields.length,
+                        formSelector: formSelector
+                    });
+                    
                     return {
                         fields: fields,
                         submit_button: submitButton,
@@ -801,14 +861,58 @@ class BrowserAutomation:
             """
             )
 
-            logger.info(
-                f"Extracted {len(form_data.get('fields', []))} form fields using DOM inspection"
-            )
+            field_count = len(form_data.get("fields", []))
+            logger.info(f"Extracted {field_count} form fields using DOM inspection")
+
+            # If no fields found, log diagnostic information
+            if field_count == 0:
+                logger.warning("No form fields extracted. Running diagnostics...")
+                # Get diagnostic info
+                diagnostic = await self.page.evaluate(
+                    """
+                    () => {
+                        const forms = document.querySelectorAll('form');
+                        const inputs = document.querySelectorAll('input, textarea, select');
+                        const bodyText = document.body ? document.body.innerText.substring(0, 200) : '';
+                        return {
+                            formCount: forms.length,
+                            inputCount: inputs.length,
+                            hasBody: !!document.body,
+                            bodyTextPreview: bodyText,
+                            url: window.location.href
+                        };
+                    }
+                """
+                )
+                logger.warning(f"Diagnostics: {diagnostic}")
+
+                # Take screenshot for debugging
+                try:
+                    debug_screenshot = (
+                        f"./storage/screenshots/debug_no_fields_{int(time.time())}.png"
+                    )
+                    os.makedirs(os.path.dirname(debug_screenshot), exist_ok=True)
+                    await self.page.screenshot(path=debug_screenshot, full_page=True)
+                    logger.info(f"Debug screenshot saved to {debug_screenshot}")
+                except Exception as screenshot_error:
+                    logger.warning(
+                        f"Failed to take debug screenshot: {screenshot_error}"
+                    )
 
             return form_data
 
         except Exception as e:
             logger.error(f"Error extracting form fields: {str(e)}", exc_info=True)
+            # Take error screenshot
+            try:
+                error_screenshot = (
+                    f"./storage/screenshots/error_extraction_{int(time.time())}.png"
+                )
+                os.makedirs(os.path.dirname(error_screenshot), exist_ok=True)
+                await self.page.screenshot(path=error_screenshot, full_page=True)
+                logger.info(f"Error screenshot saved to {error_screenshot}")
+            except:
+                pass
             return {
                 "fields": [],
                 "submit_button": None,

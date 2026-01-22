@@ -59,6 +59,11 @@ class SubmissionWorkflow:
                 submission_detected = await self.browser.detect_submission_page()
                 if not submission_detected:
                     logger.warning("Could not detect submission form, proceeding anyway")
+                else:
+                    logger.info("Submission form detected successfully")
+                    # If detection clicked a link, wait for page to fully load
+                    await self.browser.page.wait_for_load_state("domcontentloaded", timeout=5000)
+                    await self.browser.page.wait_for_timeout(2000)  # Extra wait for dynamic content
             except Exception as e:
                 logger.warning(f"Error during submission page detection: {e}, proceeding anyway")
                 submission_detected = False
@@ -70,11 +75,16 @@ class SubmissionWorkflow:
                 return {
                     "status": "captcha_required",
                     "message": "CAPTCHA detected on submission page",
-                    "requires_manual_intervention": True
+                    "requires_manual_intervention": True,
+                    "analysis_method": "unknown"
                 }
             
             # Step 4: Get form HTML and analyze with AI or DOM extraction
+            # Wait a bit more to ensure page is fully loaded
+            await self.browser.page.wait_for_timeout(2000)
+            
             html_content = await self.browser.get_page_content()
+            logger.debug(f"Retrieved page HTML (length: {len(html_content)} chars)")
             
             # Track if we're using DOM extraction (to skip AI mapping later)
             using_dom_extraction = False
@@ -94,14 +104,40 @@ class SubmissionWorkflow:
                         form_structure = dom_structure
                         using_dom_extraction = True
                         logger.info("Using DOM-extracted form structure")
+                    else:
+                        logger.error("DOM extraction also returned no fields")
+                        # Still use DOM structure for error reporting
+                        form_structure = dom_structure
+                        using_dom_extraction = True
             
-            if not form_structure.get("fields"):
-                logger.warning("No form fields detected after all extraction methods")
-                return {
-                    "status": "error",
-                    "message": "No form fields detected on page",
-                    "form_structure": form_structure
-                }
+            field_count = len(form_structure.get("fields", []))
+            logger.info(f"Form analysis complete. Found {field_count} fields. Method: {'DOM' if using_dom_extraction else 'AI'}")
+            
+            if field_count == 0:
+                logger.error("No form fields detected after all extraction methods")
+                # Get page URL for better error message
+                current_url = self.browser.page.url
+                
+                # Try one more time with a longer wait - sometimes forms load very slowly
+                logger.info("Retrying field extraction with longer wait...")
+                await self.browser.page.wait_for_timeout(3000)
+                retry_structure = await self.browser.extract_form_fields_dom()
+                retry_count = len(retry_structure.get("fields", []))
+                
+                if retry_count > 0:
+                    logger.info(f"Retry successful! Found {retry_count} fields on second attempt")
+                    form_structure = retry_structure
+                    using_dom_extraction = True
+                    field_count = retry_count
+                else:
+                    # Still no fields - return error
+                    return {
+                        "status": "error",
+                        "message": f"No form fields detected on page: {current_url}. The page may not contain a form, or the form may be dynamically loaded. Check if the form is in an iframe or requires JavaScript to render.",
+                        "form_structure": form_structure,
+                        "url": current_url,
+                        "analysis_method": "dom" if using_dom_extraction else "ai"
+                    }
             
             # Store form_structure for error handling (before any errors might occur)
             self._last_form_structure = form_structure
@@ -278,13 +314,18 @@ class SubmissionWorkflow:
                 "status": "error",
                 "message": f"Workflow error: {str(e)}",
                 "error_type": type(e).__name__,
-                "error_details": str(e)
+                "error_details": str(e),
+                "analysis_method": "unknown"  # Default to unknown if we can't determine
             }
             
             # Try to include form_structure if we have it
             try:
                 if hasattr(self, '_last_form_structure'):
                     error_result["form_structure"] = self._last_form_structure
+                    # Try to determine analysis method from form structure
+                    if self._last_form_structure and self._last_form_structure.get("fields"):
+                        # If we have fields, we likely used DOM extraction
+                        error_result["analysis_method"] = "dom"
             except:
                 pass
             
