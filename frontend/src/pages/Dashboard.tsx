@@ -116,6 +116,26 @@ export default function Dashboard() {
     }
   }
 
+  /**
+   * Delete a failed submission permanently
+   * Removes the submission record from the database
+   * @param {number} submissionId - ID of the submission to delete
+   */
+  async function handleDelete(submissionId: number) {
+    if (!confirm('Are you sure you want to delete this submission? This action cannot be undone.')) return;
+
+    setDeleting(submissionId);
+    try {
+      await deleteSubmission(submissionId);
+      await loadDashboardData();
+      alert('Submission deleted successfully');
+    } catch (error: any) {
+      alert(error.message || 'Failed to delete submission');
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   function handleViewDetails(submission: any) {
     setSelectedSubmission(submission);
   }
@@ -1004,23 +1024,44 @@ export default function Dashboard() {
 
             {/* Actions */}
             <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  handleRetry(selectedSubmission.id);
-                  closeDetailsModal();
-                }}
-                disabled={retrying === selectedSubmission.id}
-                className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {retrying === selectedSubmission.id ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="animate-spin">⏳</span>
-                    Retrying...
-                  </span>
-                ) : (
-                  'Retry Submission'
-                )}
-              </button>
+              {selectedSubmission.status === 'failed' && (
+                <>
+                  <button
+                    onClick={() => {
+                      handleRetry(selectedSubmission.id);
+                      closeDetailsModal();
+                    }}
+                    disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
+                    className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {retrying === selectedSubmission.id ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="animate-spin">⏳</span>
+                        Retrying...
+                      </span>
+                    ) : (
+                      'Retry Submission'
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleDelete(selectedSubmission.id);
+                      closeDetailsModal();
+                    }}
+                    disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
+                    className="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {deleting === selectedSubmission.id ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="animate-spin">⏳</span>
+                        Deleting...
+                      </span>
+                    ) : (
+                      'Delete'
+                    )}
+                  </button>
+                </>
+              )}
               <button
                 onClick={closeDetailsModal}
                 className="btn btn-secondary"
