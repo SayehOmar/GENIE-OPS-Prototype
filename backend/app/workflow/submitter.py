@@ -12,10 +12,21 @@ from app.utils.logger import logger
 
 class SubmissionWorkflow:
     """
-    Orchestrates the submission workflow
+    Orchestrates the complete submission workflow from navigation to form submission.
+    
+    This class coordinates between the AI Form Reader (Brain) and Browser Automation (Hands)
+    to execute the full submission process. It handles the entire lifecycle of a submission
+    including form detection, analysis, field mapping, filling, and submission verification.
     """
     
     def __init__(self):
+        """
+        Initialize the SubmissionWorkflow with browser automation and form reader.
+        
+        Sets up the browser automation handler (Playwright) and AI form reader (Ollama).
+        If the form reader fails to initialize (e.g., Ollama not running), the workflow
+        will fall back to DOM-based form extraction.
+        """
         self.browser = BrowserAutomation()
         try:
             self.form_reader = FormReader()
@@ -30,22 +41,43 @@ class SubmissionWorkflow:
         screenshot_path: Optional[str] = None
     ) -> Dict:
         """
-        Complete workflow for form submission:
+        Execute the complete submission workflow from start to finish.
+        
+        This method orchestrates the entire automated submission process:
         1. Navigate to directory submission page
-        2. Detect submission form
-        3. Analyze form with AI
-        4. Map SaaS data to form fields
-        5. Fill and submit form
-        6. Verify submission
-        7. Handle CAPTCHA detection
+        2. Detect submission form (may need to click "Submit" link or open modal)
+        3. Analyze form structure using AI (Ollama) or DOM extraction
+        4. Map SaaS data to detected form fields intelligently
+        5. Fill form fields with SaaS information (text, selects, file uploads)
+        6. Submit the form and wait for confirmation
+        7. Verify submission success and handle errors
+        8. Detect CAPTCHA presence (safety feature)
+        
+        The method uses a hybrid approach: it tries AI analysis first for better
+        field understanding, but falls back to DOM extraction if AI is unavailable
+        or fails. This ensures reliability even without Ollama running.
         
         Args:
             directory_url: URL of the directory submission page
-            saas_data: Dictionary containing SaaS product data (name, url, email, description, category, logo_path)
+            saas_data: Dictionary containing SaaS product data:
+                - name: Product name
+                - url: Product website URL
+                - contact_email: Contact email address
+                - description: Product description
+                - category: Product category
+                - logo_path: Path to logo file (or URL)
             screenshot_path: Optional path to save screenshot after submission
+                (useful for debugging and verification)
         
         Returns:
-            Dict with status, message, and details
+            Dictionary with workflow results:
+                - status: "success", "error", or "captcha_required"
+                - message: Human-readable status message
+                - form_structure: Detected form structure with fields
+                - fields_filled: Number of fields successfully filled
+                - total_fields: Total number of fields detected
+                - fill_errors: List of errors encountered during filling
+                - analysis_method: "ai" or "dom" indicating method used
         """
         try:
             logger.info(f"Starting submission workflow for {directory_url}")

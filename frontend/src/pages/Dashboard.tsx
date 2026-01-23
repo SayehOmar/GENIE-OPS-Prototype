@@ -4,7 +4,7 @@ import { SkeletonCard } from '../components/Skeleton';
 // @ts-ignore - JS module
 import { getSaaSList } from '../api/saas';
 // @ts-ignore - JS module
-import { getSubmissionStats, getSubmissions, retrySubmission } from '../api/submissions';
+import { getSubmissionStats, getSubmissions, retrySubmission, deleteSubmission } from '../api/submissions';
 // @ts-ignore - JS module
 import { getDirectories } from '../api/directories';
 // @ts-ignore - JS module
@@ -28,6 +28,7 @@ export default function Dashboard() {
   const [directories, setDirectories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [retrying, setRetrying] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<number | null>(null);
   const [selectedSubmission, setSelectedSubmission] = useState<any | null>(null);
 
   useEffect(() => {
@@ -285,23 +286,42 @@ export default function Dashboard() {
                     Click to view details →
                   </p>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRetry(sub.id);
-                  }}
-                  disabled={retrying === sub.id}
-                  className="btn btn-secondary text-sm px-4 py-2 ml-4 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {retrying === sub.id ? (
-                    <span className="flex items-center gap-2">
-                      <span className="animate-spin">⏳</span>
-                      Retrying...
-                    </span>
-                  ) : (
-                    'Retry'
-                  )}
-                </button>
+                <div className="flex gap-2 ml-4">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRetry(sub.id);
+                    }}
+                    disabled={retrying === sub.id || deleting === sub.id}
+                    className="btn btn-secondary text-sm px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {retrying === sub.id ? (
+                      <span className="flex items-center gap-2">
+                        <span className="animate-spin">⏳</span>
+                        Retrying...
+                      </span>
+                    ) : (
+                      'Retry'
+                    )}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(sub.id);
+                    }}
+                    disabled={retrying === sub.id || deleting === sub.id}
+                    className="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border-red-500/30 text-sm px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {deleting === sub.id ? (
+                      <span className="flex items-center gap-2">
+                        <span className="animate-spin">⏳</span>
+                        Deleting...
+                      </span>
+                    ) : (
+                      'Delete'
+                    )}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

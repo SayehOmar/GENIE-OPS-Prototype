@@ -27,11 +27,30 @@ except ImportError:
 
 class BrowserAutomation:
     """
-    Browser automation handler using Playwright
-    Handles navigation, form filling, file uploads, and submission
+    Browser automation handler using Playwright.
+    
+    This class is the "Hands" of the system - it performs all browser interactions
+    including navigation, form detection, field filling, file uploads, and form submission.
+    It uses Playwright for reliable cross-browser automation with support for
+    modern web features like dynamic content, modals, and JavaScript-heavy pages.
+    
+    Key capabilities:
+    - Navigate to URLs and wait for page load
+    - Detect submission forms (including modals and multi-step forms)
+    - Fill text inputs, textareas, selects, and file uploads
+    - Submit forms and verify success
+    - Detect CAPTCHA presence
+    - Take screenshots for debugging
+    - Extract form fields using DOM inspection
     """
 
     def __init__(self):
+        """
+        Initialize the BrowserAutomation instance.
+        
+        Creates a new instance but doesn't start the browser yet. The browser
+        is started lazily when needed (on first navigation or operation).
+        """
         self.browser: Browser = None
         self.page: Page = None
         self.playwright = None
@@ -86,9 +105,23 @@ class BrowserAutomation:
 
     async def detect_submission_page(self) -> bool:
         """
-        Detect if we're on a submission page or need to navigate to it
-        Returns True if submission form is found
-        Enhanced to handle modals, multi-step forms, and dynamic content
+        Detect if we're on a submission page or need to navigate to it.
+        
+        This method intelligently detects submission forms on the current page. It looks for:
+        - Form elements with input fields
+        - Submission-related keywords in page text
+        - Submit buttons and links
+        - Modal forms that may need to be opened
+        
+        If a submission form is not found on the current page, it attempts to find and
+        click submission links/buttons to navigate to the form page.
+        
+        Returns:
+            True if submission form is detected (or navigation was successful)
+            False if form could not be detected (but workflow continues anyway)
+            
+        Note: Enhanced to handle modals, multi-step forms, and dynamic content.
+        Uses timeouts to prevent hanging on complex pages.
         """
         if not self.page:
             raise Exception("Browser not started")
@@ -228,11 +261,30 @@ class BrowserAutomation:
         self, field_mappings: Dict[str, str], form_structure: Optional[Dict] = None
     ):
         """
-        Fill form fields with provided data using selectors from AI analysis
-
+        Fill form fields with provided data using CSS selectors.
+        
+        Iterates through the field mappings and fills each field with its corresponding
+        value. Handles different field types appropriately:
+        - Text inputs: Clear and fill with text
+        - Textareas: Fill with text (supports multi-line)
+        - Select dropdowns: Select by value or visible text
+        - File inputs: Upload file from path or download from URL
+        
+        The method includes error handling for each field, so if one field fails,
+        it continues with the others. All errors are collected and returned.
+        
         Args:
-            field_mappings: Dict mapping CSS selectors to values
-            form_structure: Optional form structure from AI analysis
+            field_mappings: Dictionary mapping CSS selectors to values to fill:
+                - Key: CSS selector (e.g., "#name", "[name='email']")
+                - Value: Value to fill (string, or file path for file inputs)
+            form_structure: Optional form structure from AI analysis (currently unused
+                but available for future enhancements)
+        
+        Returns:
+            Dictionary with fill results:
+                - filled_count: Number of fields successfully filled
+                - total_fields: Total number of fields in mappings
+                - errors: List of error messages for failed fields
         """
         if not self.page:
             raise Exception("Browser not started")
@@ -404,10 +456,27 @@ class BrowserAutomation:
 
     async def submit_form(self, submit_button_selector: Optional[str] = None) -> bool:
         """
-        Submit the form
-
+        Submit the form by clicking the submit button.
+        
+        Attempts to submit the form using the provided selector, or automatically
+        detects the submit button if no selector is provided. Handles various
+        submit button types and patterns commonly found on web forms.
+        
+        After clicking, waits for navigation or DOM changes to verify submission.
+        For test forms that use preventDefault(), checks for success messages
+        or form resets instead of navigation.
+        
         Args:
-            submit_button_selector: Optional CSS selector for submit button
+            submit_button_selector: Optional CSS selector for the submit button.
+                If not provided, automatically searches for common submit button patterns:
+                - button[type='submit']
+                - input[type='submit']
+                - Buttons with text containing "Submit", "Add", "Save"
+                - Common submit button IDs and classes
+        
+        Returns:
+            True if form submission was attempted successfully
+            False if submission failed (button not found, click failed, etc.)
         """
         if not self.page:
             raise Exception("Browser not started")
@@ -596,7 +665,20 @@ class BrowserAutomation:
 
     async def detect_captcha(self) -> bool:
         """
-        Detect if CAPTCHA is present on the page
+        Detect if CAPTCHA is present on the page.
+        
+        Checks for common CAPTCHA implementations including:
+        - reCAPTCHA (Google)
+        - hCaptcha
+        - Custom CAPTCHA implementations
+        
+        This is a safety feature to prevent the system from attempting to
+        submit forms that require human verification. When CAPTCHA is detected,
+        the submission is marked as failed with a specific error message.
+        
+        Returns:
+            True if CAPTCHA is detected on the page
+            False if no CAPTCHA is found
         """
         if not self.page:
             raise Exception("Browser not started")

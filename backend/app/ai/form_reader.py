@@ -25,11 +25,33 @@ except ImportError:
 
 class FormReader:
     """
-    AI-powered form reader using Ollama (local LLM)
-    Analyzes HTML forms and extracts field information for automation
+    AI-powered form reader using Ollama (local LLM).
+    
+    This class is the "Brain" of the system - it analyzes HTML forms and extracts
+    structured field information needed for automation. It uses a local LLM (Ollama)
+    to understand form structure, field purposes, and generate reliable CSS selectors.
+    
+    The class supports:
+    - Pure AI analysis (Ollama LLM)
+    - Hybrid approach (DOM extraction + rule-based + optional LLM enhancement)
+    - Intelligent field mapping from SaaS data to form fields
+    - Fallback to simple rule-based mapping if AI is unavailable
+    
+    Key features:
+    - Extracts form fields with selectors, types, labels, purposes
+    - Identifies submit buttons
+    - Maps SaaS data intelligently to form fields
+    - Handles complex forms with dynamic content
     """
 
     def __init__(self):
+        """
+        Initialize the FormReader with Ollama client configuration.
+        
+        Sets up connection to Ollama service and configures the LLM model to use.
+        If Ollama is not available or connection fails, the reader will still initialize
+        but AI features will be disabled (fallback to DOM extraction only).
+        """
         self.base_url = settings.OLLAMA_BASE_URL
         self.model = settings.LLM_MODEL
         self.temperature = settings.LLM_TEMPERATURE
@@ -77,8 +99,28 @@ class FormReader:
 
     async def analyze_form(self, html_content: str) -> dict:
         """
-        Analyze form HTML and extract field information using Ollama
-        Returns structured form data with field types, labels, selectors, etc.
+        Analyze form HTML and extract field information using Ollama LLM.
+        
+        Sends the form HTML to the local LLM (Ollama) with a carefully crafted prompt
+        to extract structured form information. The LLM returns JSON with field details
+        including selectors, types, labels, purposes, and submit button information.
+        
+        The method includes:
+        - HTML extraction (only form-related content to reduce tokens)
+        - Few-shot examples for better LLM understanding
+        - JSON response cleaning and validation
+        - Error handling with graceful fallback
+        
+        Args:
+            html_content: Full HTML content of the page containing the form
+            
+        Returns:
+            Dictionary containing:
+                - fields: List of field objects with selector, type, name, label, purpose, etc.
+                - submit_button: Submit button information with selector and text
+                - form_selector: CSS selector for the form element
+                - form_structure: Complete form structure for debugging
+                - error: Error message if analysis failed (None if successful)
         """
         if not self.client:
             logger.error("Ollama client not initialized. Make sure Ollama is running.")

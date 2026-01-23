@@ -50,10 +50,32 @@ async def start_submission_job(
     db: Session = Depends(get_db),
 ):
     """
-    Start a submission job for a SaaS product across multiple directories
-
-    Creates submission records and queues them for processing.
-    The actual submission workflow runs in the background.
+    Start a submission job for a SaaS product across multiple directories.
+    
+    Creates submission records for the specified SaaS product and directories,
+    then queues them for processing by the workflow manager. If no directories
+    are specified, submits to all available directories. Skips directories where
+    a submission already exists.
+    
+    Args:
+        job_request: StartJobRequest containing:
+            - saas_id: ID of the SaaS product to submit
+            - directory_ids: Optional list of directory IDs (None = all directories)
+        background_tasks: FastAPI background tasks for async processing
+        db: Database session dependency
+        
+    Returns:
+        JobResponse with job details including:
+            - job_id: Unique job identifier
+            - message: Status message
+            - saas_id: SaaS product ID
+            - total_directories: Total directories in job
+            - submissions_created: Number of new submission records created
+            - status: Job status ("queued")
+            
+    Raises:
+        HTTPException: 404 if SaaS product not found
+        HTTPException: 400 if directory IDs are invalid or no directories available
     """
     # Verify SaaS exists
     saas = get_saas_by_id(db, job_request.saas_id)
@@ -127,8 +149,25 @@ async def get_job_status(
     db: Session = Depends(get_db),
 ):
     """
-    Get submission job status for a SaaS product
-    Returns summary of all submissions for the SaaS
+    Get submission job status for a SaaS product.
+    
+    Retrieves all submissions for a specific SaaS product and provides
+    a summary breakdown by status (pending, submitted, approved, failed).
+    
+    Args:
+        saas_id: ID of the SaaS product to get status for
+        db: Database session dependency
+        
+    Returns:
+        Dictionary containing:
+            - saas_id: SaaS product ID
+            - saas_name: Name of the SaaS product
+            - total_submissions: Total number of submissions
+            - status_breakdown: Dictionary with counts by status
+            - submissions: List of all submission objects
+            
+    Raises:
+        HTTPException: 404 if SaaS product not found
     """
     # Verify SaaS exists
     saas = get_saas_by_id(db, saas_id)
@@ -158,12 +197,31 @@ async def process_submission(
     db: Session = Depends(get_db),
 ):
     """
-    Process a single submission by executing the workflow
-    This will:
+    Process a single submission by executing the complete workflow.
+    
+    Manually triggers the submission workflow for a specific submission.
+    The workflow includes:
     1. Navigate to the directory submission page
-    2. Analyze the form with AI
-    3. Fill and submit the form
-    4. Update the submission status in the database
+    2. Detect and analyze the form structure (using AI or DOM extraction)
+    3. Map SaaS data to form fields
+    4. Fill form fields with SaaS information
+    5. Submit the form
+    6. Verify submission and update status in database
+    
+    Args:
+        submission_id: ID of the submission to process
+        background_tasks: FastAPI background tasks for async processing
+        db: Database session dependency
+        
+    Returns:
+        Dictionary with:
+            - message: Status message
+            - submission_id: ID of the submission
+            - status: Processing status ("processing")
+            
+    Raises:
+        HTTPException: 404 if submission, SaaS, or directory not found
+        HTTPException: 400 if submission status is not "pending" or "failed"
     """
     # Get submission
     submission = get_submission_by_id(db, submission_id)
@@ -252,7 +310,20 @@ async def process_submission(
 @router.get("/workflow/status")
 async def get_workflow_status():
     """
-    Get the current status of the workflow manager
+    Get the current status of the workflow manager.
+    
+    Returns real-time information about the workflow manager including
+    whether it's running, how many tasks are active, and configuration settings.
+    
+    Returns:
+        Dictionary containing:
+            - is_running: Boolean indicating if workflow manager is active
+            - max_concurrent: Maximum concurrent submissions allowed
+            - batch_size: Number of submissions processed per batch
+            - processing_interval: Seconds between processing cycles
+            - active_tasks: Number of currently processing submissions
+            - active_submission_ids: List of submission IDs being processed
+            - total_tracked_tasks: Total tasks tracked by manager
     """
     manager = get_workflow_manager()
     return manager.get_status()
@@ -385,7 +456,26 @@ async def process_saas_submissions(
 @router.get("/progress/{submission_id}")
 async def get_submission_progress(submission_id: int):
     """
-    Get real-time progress for a specific submission
+    Get real-time progress for a specific submission.
+    
+    Returns detailed progress information for a submission that is currently
+    being processed, including current step, progress percentage, and status message.
+    If the submission is not currently being processed, returns basic status.
+    
+    Args:
+        submission_id: ID of the submission to get progress for
+        
+    Returns:
+        Dictionary containing:
+            - submission_id: ID of the submission
+            - status: Current processing status (queued, analyzing_form, filling_form, etc.)
+            - progress: Progress percentage (0-100)
+            - message: Current status message
+            - started_at: ISO timestamp when processing started
+            - completed_at: ISO timestamp when processing completed (if finished)
+            
+    Raises:
+        HTTPException: 404 if submission not found
     """
     manager = get_workflow_manager()
     progress = manager.get_submission_progress(submission_id)

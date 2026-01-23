@@ -26,7 +26,18 @@ import json
 
 class WorkflowManager:
     """
-    Manages the submission queue and processes submissions in batches
+    Manages the submission queue and processes submissions in batches.
+    
+    The WorkflowManager is the control center that orchestrates automated form submissions.
+    It continuously monitors the database for pending submissions, processes them concurrently
+    up to a configurable limit, handles retries, and tracks progress for real-time updates.
+    
+    Key features:
+    - Automatic batch processing of pending submissions
+    - Concurrent processing with configurable limits
+    - Automatic retry logic with exponential backoff
+    - Real-time progress tracking per submission
+    - Graceful shutdown handling
     """
     
     def __init__(
@@ -36,6 +47,15 @@ class WorkflowManager:
         processing_interval: Optional[int] = None,
         max_retries: Optional[int] = None
     ):
+        """
+        Initialize the WorkflowManager with configuration settings.
+        
+        Args:
+            max_concurrent: Maximum number of submissions to process simultaneously (default: from config)
+            batch_size: Number of submissions to fetch per processing cycle (default: from config)
+            processing_interval: Seconds between processing cycles (default: from config)
+            max_retries: Maximum retry attempts per submission before marking as failed (default: from config)
+        """
         self.max_concurrent = max_concurrent or settings.WORKFLOW_MAX_CONCURRENT
         self.batch_size = batch_size or settings.WORKFLOW_BATCH_SIZE
         self.processing_interval = processing_interval or settings.WORKFLOW_PROCESSING_INTERVAL
@@ -48,17 +68,25 @@ class WorkflowManager:
         # Progress tracking: {submission_id: {"status": "analyzing_form", "progress": 25, "message": "..."}}
         self.progress_tracking: Dict[int, Dict] = {}
         
+        # Log the actual values being used (from settings if parameters were None)
         logger.info(
             f"WorkflowManager initialized: "
-            f"max_concurrent={max_concurrent}, "
-            f"batch_size={batch_size}, "
-            f"interval={processing_interval}s"
+            f"max_concurrent={self.max_concurrent}, "
+            f"batch_size={self.batch_size}, "
+            f"interval={self.processing_interval}s, "
+            f"max_retries={self.max_retries}"
         )
     
     async def start(self):
         """
-        Start the workflow manager
-        Begins periodic processing of pending submissions
+        Start the workflow manager and begin periodic processing.
+        
+        Initializes the scheduler loop that continuously monitors for pending submissions
+        and processes them according to the configured batch size and concurrency limits.
+        This method is called automatically when the FastAPI application starts.
+        
+        Raises:
+            Warning: If the manager is already running
         """
         if self.is_running:
             logger.warning("WorkflowManager is already running")
@@ -70,7 +98,11 @@ class WorkflowManager:
     
     async def stop(self):
         """
-        Stop the workflow manager
+        Stop the workflow manager gracefully.
+        
+        Cancels the scheduler loop and waits for all active processing tasks to complete
+        before shutting down. This ensures no submissions are lost or left in an
+        inconsistent state. Called automatically when the FastAPI application shuts down.
         """
         self.is_running = False
         
@@ -104,7 +136,15 @@ class WorkflowManager:
     
     async def process_pending_submissions(self):
         """
-        Process a batch of pending submissions
+        Process a batch of pending submissions up to the configured limits.
+        
+        Fetches pending submissions from the database (limited by batch_size),
+        checks available processing slots (based on max_concurrent), and starts
+        processing tasks for available submissions. This method is called
+        periodically by the scheduler loop.
+        
+        The method respects the max_concurrent limit and will skip processing
+        if all slots are currently busy, waiting for the next cycle.
         """
         # Get database session
         db = SessionLocal()
@@ -143,7 +183,26 @@ class WorkflowManager:
     
     async def _process_submission(self, submission_id: int):
         """
-        Process a single submission
+        Process a single submission through the complete workflow.
+        
+        This is the core processing method that executes the full submission workflow:
+        1. Validates submission exists and is in pending status
+        2. Checks retry count hasn't exceeded maximum
+        3. Retrieves SaaS and Directory data
+        4. Updates progress tracking throughout the process
+        5. Executes the submission workflow (navigate, analyze, fill, submit)
+        6. Updates submission status based on result (submitted/failed/captcha)
+        7. Handles retries if submission fails and retry count allows
+        
+        Args:
+            submission_id: The unique ID of the submission to process
+            
+        The method updates the submission record in the database with:
+        - Status (pending -> submitted/failed)
+        - Error messages if failed
+        - Form structure and fill results
+        - Retry count increments
+        - Timestamps (submitted_at)
         """
         db = SessionLocal()
         try:
@@ -430,7 +489,21 @@ class WorkflowManager:
     
     def get_status(self) -> Dict:
         """
-        Get current status of the workflow manager
+        Get current status and configuration of the workflow manager.
+        
+        Returns real-time information about the workflow manager state including
+        whether it's running, how many tasks are active, and all configuration settings.
+        Used by the frontend dashboard to display workflow manager status.
+        
+        Returns:
+            Dictionary containing:
+                - is_running: Boolean indicating if workflow manager is active
+                - max_concurrent: Maximum concurrent submissions allowed
+                - batch_size: Number of submissions processed per batch
+                - processing_interval: Seconds between processing cycles
+                - active_tasks: Number of currently processing submissions
+                - active_submission_ids: List of submission IDs being processed
+                - total_tracked_tasks: Total tasks tracked by manager
         """
         active_tasks = [sid for sid, task in self.processing_tasks.items() if not task.done()]
         
