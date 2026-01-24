@@ -216,7 +216,7 @@ class BrowserWorkerPool:
             assigned_worker = self.session_workers[session_id]
             if assigned_worker in alive_workers:
                 # Worker is still alive, reuse it
-                logger.debug(f"Reusing worker {assigned_worker} for session {session_id[:8]}...")
+                logger.info(f"Reusing worker {assigned_worker} for session {session_id[:8]}...")
                 return assigned_worker
             else:
                 # Worker died, assign a new one
@@ -293,8 +293,9 @@ class BrowserWorkerPool:
             params=params
         )
         
-        # Get worker to use (round-robin)
-        worker_index = self._get_next_worker()
+        # Get worker to use (session-based or round-robin)
+        worker_index = self._get_next_worker(session_id=session_id)
+        logger.debug(f"Executing command '{command_type}' on worker {worker_index} (session: {session_id[:8] if session_id else 'none'}...)")
         command_queue = self.command_queues[worker_index]
         result_queue = self.result_queues[worker_index]
         

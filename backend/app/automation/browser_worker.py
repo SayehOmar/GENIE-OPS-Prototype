@@ -372,6 +372,9 @@ class BrowserWorker:
                             wait_until="domcontentloaded",
                         )
                         await self.page.wait_for_timeout(1000)
+                        # Update current_url after re-navigation to ensure it's set
+                        final_url = self.page.url
+                        self.current_url = final_url
                         logger.info(f"Successfully re-navigated to {self.current_url}")
                     except Exception as nav_error:
                         logger.error(
@@ -631,6 +634,12 @@ class BrowserWorker:
 
     async def _handle_submit_form(self, command_id: str, params: Dict) -> BrowserResult:
         """Handle submit_form command"""
+        # Get form URL from params if provided (fallback if current_url not set)
+        form_url = params.get("form_url")
+        if form_url and not self.current_url:
+            self.current_url = form_url
+            logger.info(f"Worker {self.worker_id}: Using form URL from params: {form_url}")
+        
         # Initialize browser if needed
         if not self.page:
             try:
@@ -653,29 +662,103 @@ class BrowserWorker:
                     "BrowserNotInitialized",
                 )
 
-        # Verify page is still on the form
+        # Verify page is still on the form and re-navigate if needed
         try:
             current_url = self.page.url
-            if (
-                self.current_url
-                and current_url != self.current_url
-                and "about:blank" not in current_url
-            ):
-                # Page navigated away, re-navigate to form
-                logger.warning(
-                    f"Worker {self.worker_id}: Page navigated away ({current_url}), re-navigating to form"
+            # Check if we need to re-navigate
+            needs_navigation = False
+            
+            # If no current_url is stored, try to get it from the page
+            if not self.current_url:
+                if current_url and current_url != "about:blank" and "localhost:5500" in current_url:
+                    # Use current page URL as fallback if it looks like the form URL
+                    self.current_url = current_url
+                    logger.info(f"Worker {self.worker_id}: No stored URL, using current page URL: {self.current_url}")
+                else:
+                    logger.warning(f"Worker {self.worker_id}: No stored URL and page is on {current_url}")
+                    # Don't fail immediately - try to continue if page looks valid
+                    if current_url and current_url != "about:blank":
+                        self.current_url = current_url
+                        logger.info(f"Worker {self.worker_id}: Using current page URL as fallback: {self.current_url}")
+                    else:
+                        return BrowserResult.error_result(
+                            command_id,
+                            f"No stored URL available for form submission (current page: {current_url}). Worker may not have navigated to form yet.",
+                            "NoURL"
+                        )
+
+            if current_url == "about:blank" or (current_url != self.current_url and "localhost:5500" not in current_url):
+                needs_navigation = True
+                logger.info(
+                    f"Worker {self.worker_id}: Page is not on form URL (current: {current_url}, expected: {self.current_url}), re-navigating..."
                 )
+
+            if needs_navigation:
                 await self.page.goto(
                     self.current_url,
                     timeout=settings.PLAYWRIGHT_TIMEOUT,
                     wait_until="domcontentloaded",
                 )
                 await self.page.wait_for_timeout(2000)
+                # Update current_url after navigation
+                final_url = self.page.url
+                self.current_url = final_url
+                # Wait for form to be present
+                try:
+                    await self.page.wait_for_selector("form", timeout=5000)
+                except:
+                    pass  # Form might already be there
         except Exception as e:
-            logger.warning(f"Worker {self.worker_id}: Could not verify page URL: {e}")
+            logger.warning(
+                f"Worker {self.worker_id}: Could not verify/navigate to page URL: {e}"
+            )
+            # Try to navigate anyway if we have a URL
+            if self.current_url:
+                try:
+                    await self.page.goto(
+                        self.current_url,
+                        timeout=settings.PLAYWRIGHT_TIMEOUT,
+                        wait_until="domcontentloaded",
+                    )
+                    await self.page.wait_for_timeout(2000)
+                    # Update current_url after navigation
+                    final_url = self.page.url
+                    self.current_url = final_url
+                except Exception as nav_error:
+                    return BrowserResult.error_result(
+                        command_id,
+                        f"Failed to navigate to form URL: {str(nav_error)}",
+                        "NavigationError",
+                    )
+
+        # Wait for page to be fully loaded and form to be ready
+        try:
+            await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except:
+            pass
 
         # Wait a bit for any animations or dynamic content
         await self.page.wait_for_timeout(1000)
+
+        # Verify form exists on the page
+        try:
+            form_count = await self.page.locator("form").count()
+            if form_count == 0:
+                logger.warning(
+                    f"Worker {self.worker_id}: No form found on page, waiting and retrying..."
+                )
+                await self.page.wait_for_timeout(2000)
+                form_count = await self.page.locator("form").count()
+                if form_count == 0:
+                    return BrowserResult.error_result(
+                        command_id,
+                        "Form not found on page - cannot submit",
+                        "FormNotFound",
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Worker {self.worker_id}: Could not verify form presence: {e}"
+            )
 
         submit_button_selector = params.get("submit_button_selector")
         submitted = False
@@ -712,14 +795,15 @@ class BrowserWorker:
         # Try common submit button selectors
         if not submitted:
             submit_selectors = [
-                "button[type='submit']",
-                "input[type='submit']",
-                "button:has-text('Submit')",
-                "button:has-text('Submit Product')",
-                "form button[type='submit']",
-                "#submissionForm button[type='submit']",
-                "button:has-text('Add')",
-                "button:has-text('Save')",
+                "button[type='submit']",  # Most common
+                "form button[type='submit']",  # Within form
+                "#submissionForm button[type='submit']",  # Specific form ID
+                "button:has-text('Submit Product')",  # Text match
+                "button:has-text('Submit')",  # Generic submit text
+                "input[type='submit']",  # Input submit button
+                "form button",  # Any button in form
+                "button:has-text('Add')",  # Alternative text
+                "button:has-text('Save')",  # Alternative text
             ]
 
             logger.info(
@@ -730,8 +814,30 @@ class BrowserWorker:
                     button = self.page.locator(selector).first
                     count = await button.count()
                     if count > 0:
+                        # Verify button is actually visible and enabled
+                        is_visible = await button.is_visible()
+                        is_enabled = await button.is_enabled()
+
+                        if not is_visible:
+                            logger.debug(
+                                f"Worker {self.worker_id}: Button found with {selector} but not visible, trying next selector..."
+                            )
+                            continue
+
+                        if not is_enabled:
+                            logger.debug(
+                                f"Worker {self.worker_id}: Button found with {selector} but disabled, waiting..."
+                            )
+                            await self.page.wait_for_timeout(1000)
+                            is_enabled = await button.is_enabled()
+                            if not is_enabled:
+                                logger.debug(
+                                    f"Worker {self.worker_id}: Button still disabled, trying next selector..."
+                                )
+                                continue
+
                         logger.info(
-                            f"Worker {self.worker_id}: Found submit button with selector: {selector}"
+                            f"Worker {self.worker_id}: Found submit button with selector: {selector} (visible: {is_visible}, enabled: {is_enabled})"
                         )
                         await button.scroll_into_view_if_needed()
                         await button.wait_for(state="visible", timeout=10000)
@@ -852,18 +958,59 @@ class BrowserWorker:
                 form_submitted = await self.page.evaluate(
                     """
                     () => {
-                        // Try to find and click the submit button via JavaScript
-                        const submitButton = document.querySelector('button[type="submit"]') || 
-                                           document.querySelector('input[type="submit"]') ||
-                                           document.querySelector('form button');
+                        // Try multiple selectors to find submit button
+                        const selectors = [
+                            'button[type="submit"]',
+                            'form button[type="submit"]',
+                            '#submissionForm button[type="submit"]',
+                            'input[type="submit"]',
+                            'form button'
+                        ];
+                        
+                        let submitButton = null;
+                        for (const selector of selectors) {
+                            try {
+                                submitButton = document.querySelector(selector);
+                                if (submitButton && submitButton.offsetParent !== null) { // Check if visible
+                                    break;
+                                }
+                            } catch (e) {
+                                continue;
+                            }
+                        }
+                        
+                        // Also try to find by text content
+                        if (!submitButton) {
+                            const buttons = document.querySelectorAll('button, input[type="submit"]');
+                            for (const btn of buttons) {
+                                const text = btn.textContent || btn.value || '';
+                                if (text.toLowerCase().includes('submit') && btn.offsetParent !== null) {
+                                    submitButton = btn;
+                                    break;
+                                }
+                            }
+                        }
+                        
                         if (submitButton) {
+                            // Scroll into view first
+                            submitButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            
                             // Create and dispatch click event to trigger all handlers
                             const clickEvent = new MouseEvent('click', {
                                 bubbles: true,
                                 cancelable: true,
-                                view: window
+                                view: window,
+                                buttons: 1
                             });
                             submitButton.dispatchEvent(clickEvent);
+                            
+                            // Also try actual click as fallback
+                            try {
+                                submitButton.click();
+                            } catch (e) {
+                                // Ignore if click fails, event dispatch should work
+                            }
+                            
                             return true;
                         }
                         
@@ -875,9 +1022,7 @@ class BrowserWorker:
                                 bubbles: true,
                                 cancelable: true
                             });
-                            if (form.dispatchEvent(submitEvent)) {
-                                form.submit();
-                            }
+                            form.dispatchEvent(submitEvent);
                             return true;
                         }
                         return false;
@@ -1416,14 +1561,21 @@ class BrowserWorker:
                         is_visible = await element.is_visible()
                         if is_visible:
                             success_text = await element.inner_text()
-                            logger.info(f"Worker {self.worker_id}: Success message element detected AND visible: {selector} - '{success_text[:100]}'")
-                            return BrowserResult.success(command_id, {
-                                "status": "success",
-                                "message": f"Submission successful (success message detected: {success_text[:200]})",
-                                "url": current_url
-                            })
+                            logger.info(
+                                f"Worker {self.worker_id}: Success message element detected AND visible: {selector} - '{success_text[:100]}'"
+                            )
+                            return BrowserResult.success(
+                                command_id,
+                                {
+                                    "status": "success",
+                                    "message": f"Submission successful (success message detected: {success_text[:200]})",
+                                    "url": current_url,
+                                },
+                            )
                         else:
-                            logger.debug(f"Worker {self.worker_id}: Success element {selector} exists but is hidden")
+                            logger.debug(
+                                f"Worker {self.worker_id}: Success element {selector} exists but is hidden"
+                            )
                 except Exception:
                     continue
         except Exception as e:
@@ -1570,6 +1722,7 @@ def worker_main(command_queue: Queue, result_queue: Queue, worker_id: int):
     # Re-initialize logger in worker process (multiprocessing requires this on Windows)
     # Use the same colored logger setup as main process
     from app.utils.logger import setup_logger
+
     worker_logger = setup_logger()
 
     worker = BrowserWorker(command_queue, result_queue, worker_id)

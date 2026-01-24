@@ -672,12 +672,19 @@ class BrowserAutomation:
             max_retries = 2
             last_error = None
             
+            # Get current URL before submitting (in case we need to pass it)
+            current_url = await self.get_current_url()
+            
             for attempt in range(max_retries):
                 try:
                     pool = get_browser_pool()
+                    # Pass current URL in params so worker can use it if needed
                     result = await pool.execute_command(
                         "submit_form",
-                        {"submit_button_selector": submit_button_selector},
+                        {
+                            "submit_button_selector": submit_button_selector,
+                            "form_url": current_url  # Pass URL as parameter
+                        },
                         session_id=self.session_id,
                         timeout=30  # 30 seconds for submit
                     )

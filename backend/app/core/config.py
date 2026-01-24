@@ -45,11 +45,11 @@ class Settings(BaseSettings):
     
     # Browser Worker Pool (for Windows threading isolation)
     BROWSER_USE_WORKER_POOL: bool = True  # Enable worker pool (default: True on Windows)
-    BROWSER_WORKER_POOL_SIZE: int = 3  # Number of worker processes (should match WORKFLOW_MAX_CONCURRENT)
+    BROWSER_WORKER_POOL_SIZE: int = 1  # Number of worker processes (1 = single browser instance)
     BROWSER_WORKER_TIMEOUT: int = 60  # Timeout in seconds for worker operations
     
     # Workflow Manager
-    WORKFLOW_MAX_CONCURRENT: int = 3  # Max concurrent submissions
+    WORKFLOW_MAX_CONCURRENT: int = 1  # Max concurrent submissions (1 = process one at a time)
     WORKFLOW_BATCH_SIZE: int = 10  # Batch size for processing
     WORKFLOW_PROCESSING_INTERVAL: int = 30  # Seconds between processing cycles
     WORKFLOW_MAX_RETRIES: int = 3  # Max retry attempts per submission

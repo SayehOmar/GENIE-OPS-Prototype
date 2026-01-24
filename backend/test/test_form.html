@@ -105,7 +105,7 @@
 <body>
     <div class="form-container">
         <h1>Submit Your Product</h1>
-        <form id="submissionForm" action="#" method="POST">
+        <form id="submissionForm" action="/success.html" class="inline" action="#" method="POST">
             <div class="form-group">
                 <label for="product_name">Product Name *</label>
                 <input type="text" id="product_name" name="product_name" placeholder="Enter your product name" required>
@@ -144,9 +144,6 @@
                 <input type="file" id="logo" name="logo" accept="image/*">
             </div>
 
-            <!-- Hidden field to track analysis method (filled by automation) -->
-            <input type="hidden" id="analysis_method" name="analysis_method" value="">
-
             <button type="submit">Submit Product</button>
         </form>
 
@@ -177,7 +174,7 @@
                 // Validate required fields
                 const requiredFields = this.querySelectorAll('input[required], textarea[required]');
                 const missingFields = [];
-                
+
                 requiredFields.forEach(field => {
                     if (!field.value || field.value.trim() === '') {
                         missingFields.push(field.getAttribute('name') || field.getAttribute('id') || 'field');
@@ -208,7 +205,7 @@
                     url: window.location.href,
                     form_data: data
                 };
-                
+
                 // Log to console with formatted output
                 console.log('%c========================================', 'color: green; font-weight: bold; font-size: 14px;');
                 console.log('%cFORM SUBMISSION SUCCESS', 'color: green; font-weight: bold; font-size: 16px;');
@@ -218,19 +215,18 @@
                 console.log('%cSubmitted Data:', 'color: purple; font-weight: bold;');
                 console.table(data);
                 console.log('%c========================================', 'color: green; font-weight: bold; font-size: 14px;');
-                
+
                 // Also log as JSON for easy parsing
                 console.log('Submission JSON:', JSON.stringify(submissionLog, null, 2));
 
-                // Success - show success message
+                // Success - show success message briefly, then redirect
                 document.getElementById('successMessage').style.display = 'block';
                 document.getElementById('errorMessage').style.display = 'none';
-                
-                // Reset form after 3 seconds
+
+                // Redirect to success page after a short delay
                 setTimeout(() => {
-                    this.reset();
-                    document.getElementById('successMessage').style.display = 'none';
-                }, 3000);
+                    window.location.href = 'success.html';
+                }, 1000);
             } catch (error) {
                 // Show error message
                 console.error('Error saving submission:', error);
