@@ -381,6 +381,32 @@ class WorkflowManager:
                     "message": "CAPTCHA detected - manual intervention required",
                     "completed_at": datetime.now().isoformat()
                 })
+            elif result.get("status") == "pending":
+                # Pending status - if form was submitted, treat as success
+                # Check if fields were filled (indicates form was processed)
+                fields_filled = result.get("fields_filled", 0)
+                if fields_filled > 0:
+                    # Form was filled and submitted, treat pending as success
+                    update_data["status"] = "submitted"
+                    update_data["submitted_at"] = datetime.now()
+                    logger.info(f"Submission {submission_id} completed (pending status but form was submitted)")
+                    self.progress_tracking[submission_id].update({
+                        "status": "completed",
+                        "progress": 100,
+                        "message": "Submission completed (status verification unclear)",
+                        "completed_at": datetime.now().isoformat()
+                    })
+                else:
+                    # No fields filled, treat as error
+                    update_data["status"] = "failed"
+                    update_data["error_message"] = result.get("message", "Submission status unclear and no fields were filled")
+                    logger.warning(f"Submission {submission_id} failed: {update_data['error_message']}")
+                    self.progress_tracking[submission_id].update({
+                        "status": "failed",
+                        "progress": 0,
+                        "message": update_data["error_message"],
+                        "completed_at": datetime.now().isoformat()
+                    })
             else:
                 # Unknown status, mark as failed
                 unknown_status = result.get('status', 'unknown')

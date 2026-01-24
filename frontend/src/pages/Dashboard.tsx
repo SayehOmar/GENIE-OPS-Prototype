@@ -386,16 +386,44 @@ export default function Dashboard() {
                     </p>
                   )}
                 </div>
-                {sub.directory?.url && (
-                  <a
-                    href={sub.directory.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn btn-secondary text-sm px-4 py-2 ml-4"
+                <div className="flex gap-2 ml-4">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedSubmission(sub);
+                    }}
+                    className="btn btn-secondary text-sm px-4 py-2"
                   >
-                    View
-                  </a>
-                )}
+                    View Logs
+                  </button>
+                  {sub.directory?.url && (
+                    <a
+                      href={sub.directory.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-secondary text-sm px-4 py-2"
+                    >
+                      View
+                    </a>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(sub.id);
+                    }}
+                    disabled={deleting === sub.id}
+                    className="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border-red-500/30 text-sm px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {deleting === sub.id ? (
+                      <span className="flex items-center gap-2">
+                        <span className="animate-spin">⏳</span>
+                        Deleting...
+                      </span>
+                    ) : (
+                      'Delete'
+                    )}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -544,21 +572,42 @@ export default function Dashboard() {
             {(() => {
               const formData = parseFormData(selectedSubmission.form_data);
               const errorMsg = selectedSubmission.error_message || '';
+              const submissionStatus = selectedSubmission.status || 'pending';
+              const isSuccessful = submissionStatus === 'submitted' || submissionStatus === 'approved';
               
               // Reconstruct workflow steps from available data
               const workflowSteps = [];
               
               // Step 1: Navigation
+              // Check if navigation failed by looking at error message
+              const navFailed = errorMsg.toLowerCase().includes('failed to navigate') || 
+                               errorMsg.toLowerCase().includes('navigation failed') ||
+                               errorMsg.toLowerCase().includes('navigation timeout');
+              
               workflowSteps.push({
                 step: 1,
                 name: 'Navigate to Directory',
-                status: 'success',
-                message: `Navigated to ${selectedSubmission.directory?.url || 'directory URL'}`,
-                timestamp: selectedSubmission.created_at
+                status: navFailed ? 'failed' : 'success',
+                message: navFailed 
+                  ? errorMsg.includes('Failed to navigate') 
+                    ? errorMsg 
+                    : `Failed to navigate to ${selectedSubmission.directory?.url || 'directory URL'}`
+                  : `Navigated to ${selectedSubmission.directory?.url || 'directory URL'}`,
+                timestamp: selectedSubmission.created_at,
+                duration: null
               });
               
               // Step 2: Form Detection
-              if (formData && formData.form_structure) {
+              // Skip if navigation failed
+              if (navFailed) {
+                workflowSteps.push({
+                  step: 2,
+                  name: 'Detect Submission Form',
+                  status: 'failed',
+                  message: 'Skipped - navigation failed',
+                  timestamp: null
+                });
+              } else if (formData && formData.form_structure) {
                 const fieldCount = formData.total_fields || 0;
                 workflowSteps.push({
                   step: 2,
@@ -580,7 +629,16 @@ export default function Dashboard() {
               }
               
               // Step 3: Form Analysis
-              if (formData) {
+              // Skip if navigation failed
+              if (navFailed) {
+                workflowSteps.push({
+                  step: 3,
+                  name: 'Analyze Form Structure',
+                  status: 'failed',
+                  message: 'Skipped - navigation failed',
+                  timestamp: null
+                });
+              } else if (formData) {
                 const analysisMethod = formData.analysis_method || 'unknown';
                 const methodLabel = analysisMethod === 'ai' ? 'AI (Ollama)' : analysisMethod === 'dom' ? 'DOM Extraction' : 'Unknown';
                 workflowSteps.push({
@@ -601,7 +659,16 @@ export default function Dashboard() {
               }
               
               // Step 4: Field Mapping
-              if (formData && formData.form_structure && formData.form_structure.fields) {
+              // Skip if navigation failed
+              if (navFailed) {
+                workflowSteps.push({
+                  step: 4,
+                  name: 'Map SaaS Data to Form Fields',
+                  status: 'failed',
+                  message: 'Skipped - navigation failed',
+                  timestamp: null
+                });
+              } else if (formData && formData.form_structure && formData.form_structure.fields) {
                 const mappedCount = formData.fields_filled || 0;
                 const totalFields = formData.total_fields || 0;
                 workflowSteps.push({
@@ -707,15 +774,63 @@ export default function Dashboard() {
                       <span>📋</span>
                       Workflow Execution Log
                     </h3>
-                    {errorMsg && (
+                    {isSuccessful ? (
+                      <span className={`px-3 py-1 rounded-full text-sm font-medium border ${
+                        submissionStatus === 'approved' 
+                          ? 'bg-green-500/20 text-green-400 border-green-500/30'
+                          : 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                      }`}>
+                        {submissionStatus === 'approved' ? 'APPROVED' : 'SUBMITTED'}
+                      </span>
+                    ) : errorMsg ? (
                       <span className="px-3 py-1 rounded-full text-sm font-medium bg-red-500/20 text-red-400 border border-red-500/30">
                         FAILED
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   
-                  {/* Failure Summary - Show at top */}
-                  {errorMsg && (
+                  {/* Success Summary - Show at top for successful submissions */}
+                  {isSuccessful && (
+                    <div className={`mb-4 p-4 border-2 rounded-lg ${
+                      submissionStatus === 'approved'
+                        ? 'bg-green-500/10 border-green-500/30'
+                        : 'bg-blue-500/10 border-blue-500/30'
+                    }`}>
+                      <h4 className={`font-bold mb-2 flex items-center gap-2 ${
+                        submissionStatus === 'approved' ? 'text-green-400' : 'text-blue-400'
+                      }`}>
+                        <span>{submissionStatus === 'approved' ? '✅' : '✓'}</span>
+                        {submissionStatus === 'approved' ? 'Submission Approved!' : 'Submission Successful!'}
+                      </h4>
+                      <div className={`space-y-2 font-medium ${
+                        submissionStatus === 'approved' ? 'text-green-300' : 'text-blue-300'
+                      }`}>
+                        <p>
+                          {submissionStatus === 'approved'
+                            ? 'Your product has been successfully submitted and approved by the directory. Congratulations!'
+                            : `Your product has been successfully submitted to ${selectedSubmission.directory?.name || 'the directory'}. It is now pending approval.`}
+                        </p>
+                        {formData && formData.fields_filled > 0 && (
+                          <p className="text-sm opacity-90">
+                            ✓ Successfully filled {formData.fields_filled} out of {formData.total_fields || formData.fields_filled} form fields
+                          </p>
+                        )}
+                        {formData && formData.analysis_method && (
+                          <p className="text-sm opacity-90">
+                            ✓ Form analyzed using {formData.analysis_method === 'ai' ? 'AI (Ollama)' : formData.analysis_method === 'dom' ? 'DOM Extraction' : formData.analysis_method}
+                          </p>
+                        )}
+                        {selectedSubmission.submitted_at && (
+                          <p className="text-sm opacity-75 mt-2">
+                            Submitted at: {new Date(selectedSubmission.submitted_at).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Failure Summary - Show at top for failed submissions */}
+                  {!isSuccessful && errorMsg && (
                     <div className="mb-4 p-4 bg-red-500/10 border-2 border-red-500/30 rounded-lg">
                       <h4 className="font-bold text-red-400 mb-2 flex items-center gap-2">
                         <span>⚠️</span>
@@ -789,17 +904,81 @@ export default function Dashboard() {
                                   </div>
                                 )}
                                 
-                                {step.timestamp && (
-                                  <p className="text-xs text-[#8b949e] mt-2">
-                                    {new Date(step.timestamp).toLocaleString()}
-                                  </p>
-                                )}
+                                {/* Timestamp with duration calculation */}
+                                <div className="mt-2 flex items-center gap-2">
+                                  {step.timestamp && (
+                                    <p className="text-xs text-[#8b949e]">
+                                      <span className="font-mono">
+                                        {new Date(step.timestamp).toLocaleString()}
+                                      </span>
+                                    </p>
+                                  )}
+                                  {idx > 0 && workflowSteps[idx - 1].timestamp && step.timestamp && (
+                                    <span className="text-xs text-[#58a6ff]">
+                                      (Duration: {Math.round((new Date(step.timestamp).getTime() - new Date(workflowSteps[idx - 1].timestamp).getTime()) / 1000)}s)
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </div>
                         </div>
                       );
                     })}
+                  </div>
+                  
+                  {/* Detailed Timeline View */}
+                  <div className="mt-6 p-4 bg-[#161b22] rounded-lg border border-[#30363d]">
+                    <h4 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                      <span>⏱️</span>
+                      Process Timeline
+                    </h4>
+                    <div className="space-y-2">
+                      {workflowSteps.map((step, idx) => {
+                        const stepTime = step.timestamp ? new Date(step.timestamp) : null;
+                        const prevStepTime = idx > 0 && workflowSteps[idx - 1].timestamp 
+                          ? new Date(workflowSteps[idx - 1].timestamp) 
+                          : null;
+                        const duration = stepTime && prevStepTime 
+                          ? Math.round((stepTime.getTime() - prevStepTime.getTime()) / 1000)
+                          : null;
+                        
+                        return (
+                          <div key={idx} className="flex items-start gap-3 text-sm">
+                            <div className={`flex-shrink-0 w-2 h-2 rounded-full mt-2 ${
+                              step.status === 'success' ? 'bg-green-400' :
+                              step.status === 'partial' ? 'bg-yellow-400' :
+                              step.status === 'failed' ? 'bg-red-400' :
+                              'bg-gray-400'
+                            }`}></div>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-white font-medium">{step.name}</span>
+                                <span className={`px-2 py-0.5 text-xs rounded ${
+                                  step.status === 'success' ? 'bg-green-500/20 text-green-400' :
+                                  step.status === 'partial' ? 'bg-yellow-500/20 text-yellow-400' :
+                                  step.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                                  'bg-gray-500/20 text-gray-400'
+                                }`}>
+                                  {step.status.toUpperCase()}
+                                </span>
+                                {duration !== null && (
+                                  <span className="text-xs text-[#58a6ff]">
+                                    ({duration}s)
+                                  </span>
+                                )}
+                              </div>
+                              {stepTime && (
+                                <p className="text-xs text-[#8b949e] mt-1 font-mono">
+                                  {stepTime.toLocaleString()}
+                                </p>
+                              )}
+                              <p className="text-xs text-[#8b949e] mt-1">{step.message}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               );
@@ -1025,43 +1204,41 @@ export default function Dashboard() {
             {/* Actions */}
             <div className="flex gap-3 mt-6">
               {selectedSubmission.status === 'failed' && (
-                <>
-                  <button
-                    onClick={() => {
-                      handleRetry(selectedSubmission.id);
-                      closeDetailsModal();
-                    }}
-                    disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
-                    className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {retrying === selectedSubmission.id ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <span className="animate-spin">⏳</span>
-                        Retrying...
-                      </span>
-                    ) : (
-                      'Retry Submission'
-                    )}
-                  </button>
-                  <button
-                    onClick={() => {
-                      handleDelete(selectedSubmission.id);
-                      closeDetailsModal();
-                    }}
-                    disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
-                    className="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {deleting === selectedSubmission.id ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <span className="animate-spin">⏳</span>
-                        Deleting...
-                      </span>
-                    ) : (
-                      'Delete'
-                    )}
-                  </button>
-                </>
+                <button
+                  onClick={() => {
+                    handleRetry(selectedSubmission.id);
+                    closeDetailsModal();
+                  }}
+                  disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
+                  className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {retrying === selectedSubmission.id ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="animate-spin">⏳</span>
+                      Retrying...
+                    </span>
+                  ) : (
+                    'Retry Submission'
+                  )}
+                </button>
               )}
+              <button
+                onClick={() => {
+                  handleDelete(selectedSubmission.id);
+                  closeDetailsModal();
+                }}
+                disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
+                className="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleting === selectedSubmission.id ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="animate-spin">⏳</span>
+                    Deleting...
+                  </span>
+                ) : (
+                  'Delete'
+                )}
+              </button>
               <button
                 onClick={closeDetailsModal}
                 className="btn btn-secondary"

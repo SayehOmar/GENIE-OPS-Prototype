@@ -70,8 +70,14 @@
             font-weight: bold;
         }
 
-        button[type="submit"]:hover {
+        button[type="submit"]:hover:not(:disabled) {
             background-color: #45a049;
+        }
+
+        button[type="submit"]:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.7;
         }
 
         .success-message {
@@ -148,8 +154,8 @@
             <strong>Success!</strong> Your product has been submitted successfully. Thank you!
         </div>
 
-        <div id="errorMessage" class="error-message">
-            <strong>Error!</strong> There was a problem submitting your product. Please try again.
+        <div id="errorMessage" class="error-message" style="display: none;">
+            <strong>Error!</strong> <span></span>
         </div>
     </div>
 
@@ -157,55 +163,116 @@
         document.getElementById('submissionForm').addEventListener('submit', async function (e) {
             e.preventDefault();
 
-            // Get form data
-            const formData = new FormData(this);
-            const data = {};
-            for (let [key, value] of formData.entries()) {
-                if (key === 'logo' && value instanceof File) {
-                    data[key] = value.name; // Just show filename for demo
-                } else {
-                    data[key] = value;
-                }
-            }
-
-            // Log to console (for testing)
-            console.log('Form submitted with data:', data);
-
-            // Save submission to reports directory via backend API
-            const timestamp = new Date().toISOString();
-            try {
-                const response = await fetch('http://localhost:8000/api/testing/save-submission', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        timestamp: timestamp,
-                        form_data: data,
-                        url: window.location.href
-                    })
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    console.log('Submission saved to reports:', result.message);
-                } else {
-                    console.warn('Failed to save submission to reports directory');
-                }
-            } catch (error) {
-                console.warn('Error saving submission:', error);
-                // Continue even if saving fails - form submission still works
-            }
-
-            // Show success message
-            document.getElementById('successMessage').style.display = 'block';
+            // Hide previous messages
+            document.getElementById('successMessage').style.display = 'none';
             document.getElementById('errorMessage').style.display = 'none';
 
-            // Reset form after 3 seconds
-            setTimeout(() => {
-                this.reset();
+            // Get submit button and disable it during submission
+            const submitButton = this.querySelector('button[type="submit"]');
+            const originalButtonText = submitButton.textContent;
+            submitButton.disabled = true;
+            submitButton.textContent = 'Submitting...';
+
+            try {
+                // Validate required fields
+                const requiredFields = this.querySelectorAll('input[required], textarea[required]');
+                const missingFields = [];
+                
+                requiredFields.forEach(field => {
+                    if (!field.value || field.value.trim() === '') {
+                        missingFields.push(field.getAttribute('name') || field.getAttribute('id') || 'field');
+                    }
+                });
+
+                if (missingFields.length > 0) {
+                    throw new Error(`Please fill in all required fields: ${missingFields.join(', ')}`);
+                }
+
+                // Get form data
+                const formData = new FormData(this);
+                const data = {};
+                for (let [key, value] of formData.entries()) {
+                    if (key === 'logo' && value instanceof File) {
+                        data[key] = value.name; // Just show filename for demo
+                    } else {
+                        data[key] = value;
+                    }
+                }
+
+                // Log to console (for testing)
+                console.log('Form submitted with data:', data);
+
+                // Save submission report directly as a downloadable file
+                const timestamp = new Date().toISOString();
+                const timestampStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                
+                // Determine analysis method
+                const analysisMethod = data.analysis_method || 'unknown';
+                const methodLabel = analysisMethod === 'ai' ? 'AI (Ollama)' : 
+                                   analysisMethod === 'dom' ? 'DOM Extraction' : 'Unknown';
+
+                // Format submission data
+                let reportContent = '='.repeat(60) + '\n';
+                reportContent += 'FORM SUBMISSION DATA\n';
+                reportContent += '='.repeat(60) + '\n';
+                reportContent += `Timestamp: ${timestamp}\n`;
+                reportContent += `URL: ${window.location.href}\n`;
+                reportContent += `Saved at: ${new Date().toISOString()}\n`;
+                reportContent += `Analysis Method: ${methodLabel} (${analysisMethod})\n`;
+                reportContent += '\n';
+                reportContent += 'Form Data:\n';
+                reportContent += '-'.repeat(60) + '\n';
+                
+                // Add form fields (exclude analysis_method from display since it's shown above)
+                for (const [key, value] of Object.entries(data)) {
+                    if (key !== 'analysis_method') {
+                        reportContent += `${key}: ${value}\n`;
+                    }
+                }
+                
+                reportContent += '\n';
+                reportContent += '='.repeat(60) + '\n';
+                reportContent += 'End of Submission\n';
+                reportContent += '='.repeat(60) + '\n';
+
+                // Create and download the file
+                const blob = new Blob([reportContent], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `form_submission_${timestampStr}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                // Success - show success message
+                console.log('Submission report downloaded successfully');
+                document.getElementById('successMessage').style.display = 'block';
+                document.getElementById('errorMessage').style.display = 'none';
+                
+                // Reset form after 3 seconds
+                setTimeout(() => {
+                    this.reset();
+                    document.getElementById('successMessage').style.display = 'none';
+                }, 3000);
+            } catch (error) {
+                // Show error message
+                console.error('Error saving submission:', error);
+                const errorElement = document.getElementById('errorMessage');
+                const errorSpan = errorElement.querySelector('span');
+                if (errorSpan) {
+                    errorSpan.textContent = error.message;
+                } else {
+                    errorElement.innerHTML = `<strong>Error!</strong> <span>${error.message}</span>`;
+                }
+                errorElement.style.display = 'block';
                 document.getElementById('successMessage').style.display = 'none';
-            }, 3000);
+            } finally {
+                // Re-enable submit button
+                submitButton.disabled = false;
+                submitButton.textContent = originalButtonText;
+            }
         });
     </script>
 </body>

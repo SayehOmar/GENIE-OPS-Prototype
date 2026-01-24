@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.workflow.manager import get_workflow_manager
+from app.automation.browser_pool import start_browser_pool, stop_browser_pool
 from app.utils.logger import logger
 
 
@@ -16,6 +17,15 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting GENIE OPS API...")
+    
+    # Start browser worker pool (for Windows threading isolation)
+    try:
+        start_browser_pool()
+        logger.info("Browser worker pool started")
+    except Exception as e:
+        logger.warning(f"Failed to start browser worker pool: {e}. Will use direct Playwright.")
+    
+    # Start workflow manager
     workflow_manager = get_workflow_manager()
     await workflow_manager.start()
     logger.info("Workflow manager started")
@@ -24,8 +34,17 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down GENIE OPS API...")
+    
+    # Stop workflow manager first
     await workflow_manager.stop()
     logger.info("Workflow manager stopped")
+    
+    # Stop browser worker pool
+    try:
+        stop_browser_pool()
+        logger.info("Browser worker pool stopped")
+    except Exception as e:
+        logger.warning(f"Error stopping browser worker pool: {e}")
 
 
 app = FastAPI(

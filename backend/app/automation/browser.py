@@ -5,6 +5,7 @@ Handles browser interactions for form submissions
 
 import os
 import time
+import asyncio
 from typing import Dict, List, Optional
 from playwright.async_api import (
     async_playwright,
@@ -14,6 +15,7 @@ from playwright.async_api import (
 )
 from app.core.config import settings
 from app.utils.logger import logger
+from app.automation.browser_pool import get_browser_pool
 
 # Optional import for URL file downloads
 try:
@@ -50,10 +52,42 @@ class BrowserAutomation:
         
         Creates a new instance but doesn't start the browser yet. The browser
         is started lazily when needed (on first navigation or operation).
+        Uses worker pool if available (Windows), otherwise uses direct Playwright.
         """
         self.browser: Browser = None
         self.page: Page = None
         self.playwright = None
+        self.use_pool = False
+        self.session_id: Optional[str] = None  # Session ID for worker assignment
+        self._check_pool_availability()
+    
+    def _check_pool_availability(self):
+        """
+        Check if browser worker pool is available and should be used.
+        
+        The pool must be started (via start_browser_pool()) before it's available.
+        This check happens when BrowserAutomation is instantiated.
+        """
+        try:
+            pool = get_browser_pool()
+            # Check if pool is configured to be used and is actually running
+            self.use_pool = pool.use_pool and pool.is_available()
+            if self.use_pool:
+                logger.debug("Using browser worker pool for operations")
+            else:
+                logger.debug("Using direct Playwright (pool not available or not started)")
+        except Exception as e:
+            logger.warning(f"Could not check pool availability: {e}, using direct Playwright")
+            self.use_pool = False
+    
+    def _refresh_pool_availability(self):
+        """
+        Refresh pool availability check.
+        
+        Useful if pool was started after BrowserAutomation was created.
+        """
+        if not self.use_pool:  # Only check if we're not already using pool
+            self._check_pool_availability()
 
     async def start(self):
         """
@@ -76,32 +110,132 @@ class BrowserAutomation:
 
         logger.info("Browser session started")
 
+    async def wait_for_page_load(self, timeout: int = 5000):
+        """
+        Wait for page to load (works with both pool and direct Playwright).
+        
+        When using worker pool, this is a no-op since the pool handles page state.
+        When using direct Playwright, waits for the page to be ready.
+        """
+        if not self.use_pool and self.page:
+            try:
+                await self.page.wait_for_load_state("domcontentloaded", timeout=timeout)
+            except:
+                pass  # Ignore timeout, page might already be loaded
+    
+    async def wait_for_timeout(self, milliseconds: int):
+        """
+        Wait for specified milliseconds (works with both pool and direct Playwright).
+        
+        When using worker pool, this is a no-op since we can't directly wait.
+        When using direct Playwright, waits for the specified time.
+        """
+        if not self.use_pool and self.page:
+            await self.page.wait_for_timeout(milliseconds)
+    
+    async def get_current_url(self) -> str:
+        """
+        Get the current page URL (works with both pool and direct Playwright).
+        
+        Returns:
+            Current URL, or empty string if not available
+        """
+        if self.use_pool:
+            # Can't directly get URL from pool, return empty
+            return ""
+        elif self.page:
+            return self.page.url
+        else:
+            return ""
+    
     async def close(self):
         """
-        Close browser session
+        Close browser session.
+        
+        Note: When using worker pool, browsers are managed by workers.
+        This only closes direct Playwright instances.
         """
-        if self.page:
-            await self.page.close()
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
-        logger.info("Browser session closed")
+        if not self.use_pool:
+            if self.page:
+                await self.page.close()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+            logger.info("Browser session closed")
 
     async def navigate(self, url: str):
         """
-        Navigate to a URL
+        Navigate to a URL.
+        
+        Uses worker pool if available, otherwise uses direct Playwright.
+        Raises exception if navigation fails.
         """
+        # Refresh pool availability in case it was started after instance creation
+        self._refresh_pool_availability()
+        
+        if self.use_pool:
+            try:
+                pool = get_browser_pool()
+                result = await pool.execute_command(
+                    "navigate",
+                    {"url": url},
+                    session_id=self.session_id
+                )
+                if result.status == "error":
+                    error_msg = result.error or "Navigation failed"
+                    logger.error(f"Navigation failed via worker pool: {error_msg}")
+                    raise Exception(error_msg)
+                
+                # Log navigation details
+                final_url = result.data.get("final_url", url)
+                status = result.data.get("status", "unknown")
+                logger.info(f"Navigated to {url} (via worker pool) - Final URL: {final_url}, Status: {status}")
+                return
+            except Exception as e:
+                error_msg = str(e)
+                # On Windows, don't fall back to direct Playwright (causes NotImplementedError)
+                import platform
+                if platform.system() == "Windows":
+                    logger.error(f"Worker pool navigation failed on Windows: {error_msg}. Cannot fall back to direct Playwright.")
+                    raise Exception(f"Navigation failed via worker pool: {error_msg}")
+                else:
+                    logger.warning(f"Worker pool navigation failed: {e}, falling back to direct Playwright")
+                    self.use_pool = False
+                    # Continue to direct Playwright path below
+        
+        # Direct Playwright path
         if not self.page:
             await self.start()
 
-        await self.page.goto(
-            url, timeout=settings.PLAYWRIGHT_TIMEOUT, wait_until="domcontentloaded"
-        )
-        logger.info(f"Navigated to {url}")
-
-        # Wait a bit for page to fully load
-        await self.page.wait_for_timeout(1000)
+        try:
+            response = await self.page.goto(
+                url, timeout=settings.PLAYWRIGHT_TIMEOUT, wait_until="domcontentloaded"
+            )
+            
+            # Verify navigation succeeded
+            if response is None:
+                raise Exception(f"Navigation to {url} returned None (page may not have loaded)")
+            
+            status = response.status
+            if status >= 400:
+                raise Exception(f"Navigation failed with HTTP {status}")
+            
+            final_url = self.page.url
+            if not final_url or final_url == "about:blank":
+                raise Exception(f"Navigation failed - page is blank or URL is invalid")
+            
+            logger.info(f"Navigated to {url} - Final URL: {final_url}, Status: {status}")
+            
+            # Wait a bit for page to fully load
+            await self.page.wait_for_timeout(1000)
+        
+        except PlaywrightTimeoutError as e:
+            logger.error(f"Navigation timeout to {url}: {e}")
+            raise Exception(f"Navigation timeout: {str(e)}")
+        except Exception as e:
+            logger.error(f"Navigation error to {url}: {e}")
+            raise
 
     async def detect_submission_page(self) -> bool:
         """
@@ -123,6 +257,19 @@ class BrowserAutomation:
         Note: Enhanced to handle modals, multi-step forms, and dynamic content.
         Uses timeouts to prevent hanging on complex pages.
         """
+        if self.use_pool:
+            try:
+                pool = get_browser_pool()
+                result = await pool.execute_command("detect_submission_page", {}, session_id=self.session_id)
+                if result.status == "error":
+                    logger.warning(f"Submission page detection failed: {result.error}")
+                    return False
+                return result.data.get("detected", False)
+            except Exception as e:
+                logger.warning(f"Worker pool detect_submission_page failed: {e}, falling back to direct Playwright")
+                self.use_pool = False
+        
+        # Direct Playwright path
         if not self.page:
             raise Exception("Browser not started")
 
@@ -286,6 +433,48 @@ class BrowserAutomation:
                 - total_fields: Total number of fields in mappings
                 - errors: List of error messages for failed fields
         """
+        if self.use_pool:
+            # Retry logic: try up to 2 times
+            max_retries = 2
+            last_error = None
+            
+            for attempt in range(max_retries):
+                try:
+                    pool = get_browser_pool()
+                    result = await pool.execute_command(
+                        "fill_form",
+                        {"field_mappings": field_mappings},
+                        session_id=self.session_id,
+                        timeout=120  # 2 minutes for fill_form
+                    )
+                    if result.status == "error":
+                        error_msg = result.error or "Form filling failed"
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Fill form attempt {attempt + 1} failed: {error_msg}, retrying...")
+                            last_error = error_msg
+                            await asyncio.sleep(1)  # Brief delay before retry
+                            continue
+                        else:
+                            raise Exception(error_msg)
+                    
+                    filled_count = result.data.get('filled_count', 0)
+                    logger.info(f"Filled form with {filled_count} fields (via worker pool, attempt {attempt + 1})")
+                    return result.data
+                except Exception as e:
+                    last_error = str(e)
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Worker pool fill_form attempt {attempt + 1} failed: {e}, retrying...")
+                        await asyncio.sleep(1)
+                        continue
+                    else:
+                        logger.warning(f"Worker pool fill_form failed after {max_retries} attempts: {e}, falling back to direct Playwright")
+                        self.use_pool = False
+                        break
+            
+            if last_error:
+                raise Exception(f"Fill form failed after {max_retries} attempts: {last_error}")
+        
+        # Direct Playwright path
         if not self.page:
             raise Exception("Browser not started")
 
@@ -478,6 +667,58 @@ class BrowserAutomation:
             True if form submission was attempted successfully
             False if submission failed (button not found, click failed, etc.)
         """
+        if self.use_pool:
+            # Retry logic: try up to 2 times
+            max_retries = 2
+            last_error = None
+            
+            for attempt in range(max_retries):
+                try:
+                    pool = get_browser_pool()
+                    result = await pool.execute_command(
+                        "submit_form",
+                        {"submit_button_selector": submit_button_selector},
+                        session_id=self.session_id,
+                        timeout=30  # 30 seconds for submit
+                    )
+                    if result.status == "error":
+                        error_msg = result.error or "Form submission failed"
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Submit form attempt {attempt + 1} failed: {error_msg}, retrying...")
+                            last_error = error_msg
+                            await asyncio.sleep(1)
+                            continue
+                        else:
+                            logger.error(f"Form submission failed after {max_retries} attempts: {error_msg}")
+                            return False
+                    
+                    submitted = result.data.get("submitted", False)
+                    if submitted:
+                        logger.info(f"Form submitted successfully (via worker pool, attempt {attempt + 1})")
+                        return True
+                    elif attempt < max_retries - 1:
+                        logger.warning(f"Submit form attempt {attempt + 1} returned not submitted, retrying...")
+                        await asyncio.sleep(1)
+                        continue
+                    else:
+                        logger.error("Form submission returned not submitted after all attempts")
+                        return False
+                except Exception as e:
+                    last_error = str(e)
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Worker pool submit_form attempt {attempt + 1} failed: {e}, retrying...")
+                        await asyncio.sleep(1)
+                        continue
+                    else:
+                        logger.warning(f"Worker pool submit_form failed after {max_retries} attempts: {e}, falling back to direct Playwright")
+                        self.use_pool = False
+                        break
+            
+            if last_error:
+                logger.error(f"Submit form failed after {max_retries} attempts: {last_error}")
+                return False
+        
+        # Direct Playwright path
         if not self.page:
             raise Exception("Browser not started")
 
@@ -570,9 +811,27 @@ class BrowserAutomation:
 
     async def wait_for_confirmation(self, timeout: int = 10000) -> Dict[str, any]:
         """
-        Wait for submission confirmation or error message
-        Returns status and message
+        Wait for submission confirmation or error message.
+        Returns status and message.
+        
+        Uses worker pool if available, otherwise uses direct Playwright.
         """
+        if self.use_pool:
+            try:
+                pool = get_browser_pool()
+                result = await pool.execute_command("wait_for_confirmation", {"timeout": timeout}, session_id=self.session_id)
+                if result.status == "error":
+                    return {
+                        "status": "unknown",
+                        "message": result.error or "Confirmation check failed",
+                        "url": ""
+                    }
+                return result.data
+            except Exception as e:
+                logger.warning(f"Worker pool wait_for_confirmation failed: {e}, falling back to direct Playwright")
+                self.use_pool = False
+        
+        # Direct Playwright path
         if not self.page:
             raise Exception("Browser not started")
 
@@ -657,10 +916,13 @@ class BrowserAutomation:
 
         except Exception as e:
             logger.error(f"Error waiting for confirmation: {str(e)}")
+            current_url = ""
+            if not self.use_pool and self.page:
+                current_url = self.page.url
             return {
                 "status": "unknown",
                 "message": f"Error: {str(e)}",
-                "url": self.page.url if self.page else "",
+                "url": current_url,
             }
 
     async def detect_captcha(self) -> bool:
@@ -680,6 +942,19 @@ class BrowserAutomation:
             True if CAPTCHA is detected on the page
             False if no CAPTCHA is found
         """
+        if self.use_pool:
+            try:
+                pool = get_browser_pool()
+                result = await pool.execute_command("detect_captcha", {})
+                if result.status == "error":
+                    logger.warning(f"CAPTCHA detection failed: {result.error}")
+                    return False
+                return result.data.get("has_captcha", False)
+            except Exception as e:
+                logger.warning(f"Worker pool detect_captcha failed: {e}, falling back to direct Playwright")
+                self.use_pool = False
+        
+        # Direct Playwright path
         if not self.page:
             raise Exception("Browser not started")
 
@@ -712,8 +987,24 @@ class BrowserAutomation:
 
     async def take_screenshot(self, path: str):
         """
-        Take a screenshot
+        Take a screenshot.
+        
+        Uses worker pool if available, otherwise uses direct Playwright.
         """
+        if self.use_pool:
+            try:
+                pool = get_browser_pool()
+                result = await pool.execute_command("take_screenshot", {"path": path}, session_id=self.session_id)
+                if result.status == "error":
+                    logger.error(f"Screenshot failed: {result.error}")
+                else:
+                    logger.info(f"Screenshot saved to {path} (via worker pool)")
+                return
+            except Exception as e:
+                logger.warning(f"Worker pool take_screenshot failed: {e}, falling back to direct Playwright")
+                self.use_pool = False
+        
+        # Direct Playwright path
         if not self.page:
             raise Exception("Browser not started")
 
@@ -727,8 +1018,22 @@ class BrowserAutomation:
 
     async def get_page_content(self) -> str:
         """
-        Get the current page HTML content
+        Get the current page HTML content.
+        
+        Uses worker pool if available, otherwise uses direct Playwright.
         """
+        if self.use_pool:
+            try:
+                pool = get_browser_pool()
+                result = await pool.execute_command("get_page_content", {})
+                if result.status == "error":
+                    raise Exception(result.error or "Failed to get page content")
+                return result.data.get("content", "")
+            except Exception as e:
+                logger.warning(f"Worker pool get_page_content failed: {e}, falling back to direct Playwright")
+                self.use_pool = False
+        
+        # Direct Playwright path
         if not self.page:
             raise Exception("Browser not started")
 
@@ -736,12 +1041,32 @@ class BrowserAutomation:
 
     async def extract_form_fields_dom(self) -> Dict:
         """
-        Extract form fields using DOM inspection (no AI needed)
-        Returns structured form data compatible with AI output format
+        Extract form fields using DOM inspection (no AI needed).
+        Returns structured form data compatible with AI output format.
+        
+        Uses worker pool if available, otherwise uses direct Playwright.
 
         Returns:
             Dict with fields, submit_button, and form_selector
         """
+        if self.use_pool:
+            try:
+                pool = get_browser_pool()
+                result = await pool.execute_command("extract_form_fields_dom", {}, session_id=self.session_id)
+                if result.status == "error":
+                    logger.error(f"DOM extraction failed: {result.error}")
+                    return {
+                        "fields": [],
+                        "submit_button": None,
+                        "form_selector": "form",
+                        "error": result.error
+                    }
+                return result.data
+            except Exception as e:
+                logger.warning(f"Worker pool extract_form_fields_dom failed: {e}, falling back to direct Playwright")
+                self.use_pool = False
+        
+        # Direct Playwright path
         if not self.page:
             raise Exception("Browser not started")
 

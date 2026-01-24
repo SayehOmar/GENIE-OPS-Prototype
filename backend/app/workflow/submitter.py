@@ -83,7 +83,17 @@ class SubmissionWorkflow:
             logger.info(f"Starting submission workflow for {directory_url}")
             
             # Step 1: Navigate to directory
-            await self.browser.navigate(directory_url)
+            try:
+                await self.browser.navigate(directory_url)
+            except Exception as nav_error:
+                error_msg = f"Failed to navigate to {directory_url}: {str(nav_error)}"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg,
+                    "form_structure": {"fields": []},
+                    "analysis_method": "unknown"
+                }
             
             # Step 2: Detect submission page (may need to click "Submit" link)
             # Use timeout to prevent hanging on complex pages
@@ -94,8 +104,8 @@ class SubmissionWorkflow:
                 else:
                     logger.info("Submission form detected successfully")
                     # If detection clicked a link, wait for page to fully load
-                    await self.browser.page.wait_for_load_state("domcontentloaded", timeout=5000)
-                    await self.browser.page.wait_for_timeout(2000)  # Extra wait for dynamic content
+                    await self.browser.wait_for_page_load(timeout=5000)
+                    await self.browser.wait_for_timeout(2000)  # Extra wait for dynamic content
             except Exception as e:
                 logger.warning(f"Error during submission page detection: {e}, proceeding anyway")
                 submission_detected = False
@@ -113,7 +123,7 @@ class SubmissionWorkflow:
             
             # Step 4: Get form HTML and analyze with AI or DOM extraction
             # Wait a bit more to ensure page is fully loaded
-            await self.browser.page.wait_for_timeout(2000)
+            await self.browser.wait_for_timeout(2000)
             
             html_content = await self.browser.get_page_content()
             logger.debug(f"Retrieved page HTML (length: {len(html_content)} chars)")
@@ -147,12 +157,12 @@ class SubmissionWorkflow:
             
             if field_count == 0:
                 logger.error("No form fields detected after all extraction methods")
-                # Get page URL for better error message
-                current_url = self.browser.page.url
+                # Get page URL for better error message (if available)
+                current_url = await self.browser.get_current_url() or "unknown"
                 
                 # Try one more time with a longer wait - sometimes forms load very slowly
                 logger.info("Retrying field extraction with longer wait...")
-                await self.browser.page.wait_for_timeout(3000)
+                await self.browser.wait_for_timeout(3000)
                 retry_structure = await self.browser.extract_form_fields_dom()
                 retry_count = len(retry_structure.get("fields", []))
                 

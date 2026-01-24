@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # For testing: set to False to see browser in action
     PLAYWRIGHT_HEADLESS_TEST: bool = False  # Set to False to watch tests fill forms
     
+    # Browser Worker Pool (for Windows threading isolation)
+    BROWSER_USE_WORKER_POOL: bool = True  # Enable worker pool (default: True on Windows)
+    BROWSER_WORKER_POOL_SIZE: int = 3  # Number of worker processes (should match WORKFLOW_MAX_CONCURRENT)
+    BROWSER_WORKER_TIMEOUT: int = 60  # Timeout in seconds for worker operations
+    
     # Workflow Manager
     WORKFLOW_MAX_CONCURRENT: int = 3  # Max concurrent submissions
     WORKFLOW_BATCH_SIZE: int = 10  # Batch size for processing
