@@ -159,7 +159,8 @@ async def get_submission_stats(
     Get submission statistics including counts by status and success rate.
     
     Calculates total submissions, breakdown by status (pending, submitted, approved, failed),
-    and overall success rate. Can be filtered by SaaS product ID.
+    and overall success rate. Includes processing submissions in pending count.
+    Can be filtered by SaaS product ID.
     
     Args:
         saas_id: Optional filter to get statistics for a specific SaaS product
@@ -168,13 +169,51 @@ async def get_submission_stats(
     Returns:
         Dictionary containing:
             - total: Total number of submissions
-            - pending: Count of pending submissions
+            - pending: Count of pending submissions (includes processing)
+            - processing: Count of currently processing submissions
             - submitted: Count of successfully submitted entries
             - approved: Count of approved submissions
             - failed: Count of failed submissions
             - success_rate: Percentage of successful submissions (submitted + approved)
+            - by_status: Breakdown by status for compatibility
     """
-    return get_submission_statistics(db, saas_id=saas_id)
+    from app.workflow.manager import get_workflow_manager
+    
+    # Get base stats from database
+    stats = get_submission_statistics(db, saas_id=saas_id)
+    
+    # Get active processing submissions from workflow manager
+    manager = get_workflow_manager()
+    active_submission_ids = manager.get_status().get("active_submission_ids", [])
+    processing_count = len(active_submission_ids)
+    
+    # If filtering by saas_id, filter active submissions too
+    if saas_id and active_submission_ids:
+        active_submissions = [get_submission_by_id(db, sid) for sid in active_submission_ids]
+        active_submissions = [s for s in active_submissions if s and s.saas_id == saas_id]
+        processing_count = len(active_submissions)
+    
+    # Add processing count to stats
+    stats["processing"] = processing_count
+    
+    # Recalculate success rate excluding pending/processing from denominator
+    completed_count = stats["submitted"] + stats["approved"] + stats["failed"]
+    if completed_count > 0:
+        success_count = stats["submitted"] + stats["approved"]
+        stats["success_rate"] = round((success_count / completed_count) * 100, 2)
+    else:
+        stats["success_rate"] = 0.0
+    
+    # Add by_status for compatibility with existing frontend code
+    stats["by_status"] = {
+        "pending": stats["pending"],
+        "submitted": stats["submitted"],
+        "approved": stats["approved"],
+        "failed": stats["failed"],
+        "processing": stats["processing"]
+    }
+    
+    return stats
 
 
 @router.post("/{submission_id}/retry")

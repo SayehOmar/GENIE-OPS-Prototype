@@ -310,10 +310,10 @@ async def process_submission(
 @router.get("/workflow/status")
 async def get_workflow_status():
     """
-    Get the current status of the workflow manager.
+    Get the current status of the workflow manager with detailed active submission information.
     
     Returns real-time information about the workflow manager including
-    whether it's running, how many tasks are active, and configuration settings.
+    progress details for each active submission.
     
     Returns:
         Dictionary containing:
@@ -324,9 +324,50 @@ async def get_workflow_status():
             - active_tasks: Number of currently processing submissions
             - active_submission_ids: List of submission IDs being processed
             - total_tracked_tasks: Total tasks tracked by manager
+            - active_submissions: List of active submission details with progress
+            - queue_length: Number of pending submissions waiting to be processed
     """
+    from app.db.session import SessionLocal
+    from app.db.crud import get_submissions, get_submission_by_id
+    
     manager = get_workflow_manager()
-    return manager.get_status()
+    status = manager.get_status()
+    
+    # Get detailed information about active submissions
+    active_submission_ids = status.get("active_submission_ids", [])
+    active_submissions = []
+    
+    db = SessionLocal()
+    try:
+        for submission_id in active_submission_ids:
+            submission = get_submission_by_id(db, submission_id)
+            if submission:
+                progress = manager.get_submission_progress(submission_id) or {}
+                active_submissions.append({
+                    "submission_id": submission_id,
+                    "saas_id": submission.saas_id,
+                    "directory_id": submission.directory_id,
+                    "status": progress.get("status", "processing"),
+                    "progress": progress.get("progress", 0),
+                    "message": progress.get("message", "Processing..."),
+                    "started_at": progress.get("started_at"),
+                    "retry_count": submission.retry_count
+                })
+    finally:
+        db.close()
+    
+    # Get queue length (pending submissions not yet processing)
+    db = SessionLocal()
+    try:
+        pending_submissions = get_submissions(db, status="pending")
+        queue_length = len([s for s in pending_submissions if s.id not in active_submission_ids])
+    finally:
+        db.close()
+    
+    status["active_submissions"] = active_submissions
+    status["queue_length"] = queue_length
+    
+    return status
 
 
 @router.post("/workflow/process-pending")

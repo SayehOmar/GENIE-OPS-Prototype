@@ -16,9 +16,11 @@ export default function Dashboard() {
     totalDirectories: 0,
     totalSubmissions: 0,
     pending: 0,
+    processing: 0,
     submitted: 0,
     approved: 0,
     failed: 0,
+    successRate: 0,
   });
   const [workflowStatus, setWorkflowStatus] = useState<any>(null);
   const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
@@ -33,9 +35,30 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadDashboardData();
-    const interval = setInterval(loadDashboardData, 30000); // Refresh every 30s
+    
+    // Start with default polling interval
+    let pollInterval = 30000; // Default: 30 seconds
+    
+    const interval = setInterval(() => {
+      loadDashboardData();
+    }, pollInterval);
+    
     return () => clearInterval(interval);
   }, []);
+  
+  // Separate effect for faster polling when there are active tasks
+  useEffect(() => {
+    if (!workflowStatus || workflowStatus.active_tasks === 0) {
+      return; // Use default polling from main effect
+    }
+    
+    // When there are active tasks, poll more frequently
+    const fastInterval = setInterval(() => {
+      loadDashboardData();
+    }, 5000); // Poll every 5 seconds when active
+    
+    return () => clearInterval(fastInterval);
+  }, [workflowStatus?.active_tasks]);
 
   async function loadDashboardData() {
     try {
@@ -50,14 +73,20 @@ export default function Dashboard() {
       setSaaSList(saas);
       setDirectories(dirs);
 
+      // Get processing count from stats or workflow status
+      const processingCount = submissionStats.processing || 
+                             (workflow?.active_tasks || 0);
+      
       setStats({
         totalSaaS: saas.length || 0,
         totalDirectories: dirs.length || 0,
         totalSubmissions: submissionStats.total || 0,
-        pending: submissionStats.by_status?.pending || 0,
+        pending: (submissionStats.by_status?.pending || 0) + processingCount, // Include processing in pending
+        processing: processingCount,
         submitted: submissionStats.by_status?.submitted || 0,
         approved: submissionStats.by_status?.approved || 0,
         failed: submissionStats.by_status?.failed || 0,
+        successRate: submissionStats.success_rate || 0,
       });
 
       // Enrich submissions with SaaS and Directory data
@@ -154,10 +183,16 @@ export default function Dashboard() {
   }
 
   function calculateSuccessRate() {
-    const { totalSubmissions, failed, submitted, approved } = stats;
-    if (totalSubmissions === 0) return 0;
+    // Use successRate from stats if available (calculated on backend excluding pending/processing)
+    if (stats.successRate > 0) {
+      return stats.successRate;
+    }
+    // Fallback calculation: exclude pending and processing from denominator
+    const { failed, submitted, approved, pending, processing } = stats;
+    const completed = submitted + approved + failed;
+    if (completed === 0) return 0;
     const successful = submitted + approved;
-    return Math.round((successful / totalSubmissions) * 100);
+    return Math.round((successful / completed) * 100);
   }
 
   return (
@@ -241,7 +276,7 @@ export default function Dashboard() {
 
       {/* Success Rate & Additional Stats */}
       {!loading && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <StatsCard
             title="Success Rate"
             value={`${calculateSuccessRate()}%`}
@@ -249,10 +284,19 @@ export default function Dashboard() {
             color={calculateSuccessRate() >= 80 ? 'green' : calculateSuccessRate() >= 50 ? 'yellow' : 'red'}
             delay={700}
           />
+          {stats.processing > 0 && (
+            <StatsCard
+              title="Processing"
+              value={stats.processing}
+              icon="⚙️"
+              color="purple"
+              delay={750}
+            />
+          )}
           <StatsCard
-            title="Processing Rate"
-            value={`${stats.submitted + stats.approved}/${stats.totalSubmissions || 1}`}
-            icon="⚡"
+            title="Completed"
+            value={`${stats.submitted + stats.approved + stats.failed}`}
+            icon="✅"
             color="blue"
             delay={800}
           />
@@ -367,13 +411,24 @@ export default function Dashboard() {
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
                     <span className="text-sm text-[#8b949e] font-mono">#{sub.id}</span>
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      sub.status === 'approved' 
-                        ? 'bg-green-500/10 text-green-400' 
-                        : 'bg-blue-500/10 text-blue-400'
-                    }`}>
-                      {sub.status.toUpperCase()}
-                    </span>
+                    {(() => {
+                      // Check if this submission is currently being processed
+                      const isProcessing = workflowStatus?.active_submission_ids?.includes(sub.id) || false;
+                      const displayStatus = isProcessing ? 'processing' : sub.status;
+                      
+                      return (
+                        <span className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${
+                          displayStatus === 'approved' 
+                            ? 'bg-green-500/10 text-green-400' 
+                            : displayStatus === 'processing'
+                            ? 'bg-purple-500/10 text-purple-400'
+                            : 'bg-blue-500/10 text-blue-400'
+                        }`}>
+                          {isProcessing && <span className="animate-spin">⏳</span>}
+                          {displayStatus.toUpperCase()}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="text-sm text-white mb-1">
                     <strong>{sub.saas?.name || `SaaS #${sub.saas_id}`}</strong>
@@ -444,14 +499,24 @@ export default function Dashboard() {
                 <div className="flex-1">
                   <div className="flex items-center gap-3">
                     <span className="text-sm text-[#8b949e] font-mono">#{sub.id}</span>
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      sub.status === 'approved' ? 'bg-green-500/10 text-green-400' :
-                      sub.status === 'submitted' ? 'bg-blue-500/10 text-blue-400' :
-                      sub.status === 'pending' ? 'bg-yellow-500/10 text-yellow-400' :
-                      'bg-red-500/10 text-red-400'
-                    }`}>
-                      {sub.status.toUpperCase()}
-                    </span>
+                    {(() => {
+                      // Check if this submission is currently being processed
+                      const isProcessing = workflowStatus?.active_submission_ids?.includes(sub.id) || false;
+                      const displayStatus = isProcessing ? 'processing' : sub.status;
+                      
+                      return (
+                        <span className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${
+                          displayStatus === 'approved' ? 'bg-green-500/10 text-green-400' :
+                          displayStatus === 'submitted' ? 'bg-blue-500/10 text-blue-400' :
+                          displayStatus === 'processing' ? 'bg-purple-500/10 text-purple-400' :
+                          displayStatus === 'pending' ? 'bg-yellow-500/10 text-yellow-400' :
+                          'bg-red-500/10 text-red-400'
+                        }`}>
+                          {isProcessing && <span className="animate-spin">⏳</span>}
+                          {displayStatus.toUpperCase()}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="text-sm text-white mt-1">
                     {sub.saas?.name || `SaaS #${sub.saas_id}`} → {sub.directory?.name || `Directory #${sub.directory_id}`}
@@ -459,8 +524,28 @@ export default function Dashboard() {
                   <p className="text-sm text-[#8b949e] mt-1">
                     Created {new Date(sub.created_at).toLocaleString()}
                   </p>
+                  {(() => {
+                    const isProcessing = workflowStatus?.active_submission_ids?.includes(sub.id) || false;
+                    if (isProcessing) {
+                      const progress = workflowStatus?.active_submissions?.find((a: any) => a.submission_id === sub.id);
+                      if (progress) {
+                        return (
+                          <div className="mt-2 flex items-center gap-2">
+                            <div className="flex-1 h-1.5 bg-[#30363d] rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-purple-500 transition-all duration-300"
+                                style={{ width: `${progress.progress || 0}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-purple-400">{progress.progress || 0}%</span>
+                          </div>
+                        );
+                      }
+                    }
+                    return null;
+                  })()}
                 </div>
-                {sub.retry_count > 0 && (
+                {sub.retry_count > 0 && !workflowStatus?.active_submission_ids?.includes(sub.id) && (
                   <span className="text-xs text-yellow-400" title="Retry attempts">
                     {sub.retry_count} retries
                   </span>
@@ -477,7 +562,7 @@ export default function Dashboard() {
       ) : workflowStatus ? (
         <div className="card animate-fade-in delay-1000">
           <h2 className="text-xl font-semibold text-white mb-4">Workflow Manager Status</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <div className="animate-slide-in delay-1100">
               <p className="text-sm text-[#8b949e] mb-1">Status</p>
               <p className={`text-lg font-semibold ${workflowStatus.is_running ? 'text-green-400' : 'text-red-400'}`}>
@@ -486,17 +571,46 @@ export default function Dashboard() {
             </div>
             <div className="animate-slide-in delay-1200">
               <p className="text-sm text-[#8b949e] mb-1">Active Tasks</p>
-              <p className="text-lg font-semibold text-white">{workflowStatus.active_tasks || 0}</p>
+              <p className="text-lg font-semibold text-purple-400">{workflowStatus.active_tasks || 0}</p>
             </div>
             <div className="animate-slide-in delay-1300">
+              <p className="text-sm text-[#8b949e] mb-1">Queue Length</p>
+              <p className="text-lg font-semibold text-yellow-400">{workflowStatus.queue_length || 0}</p>
+            </div>
+            <div className="animate-slide-in delay-1400">
               <p className="text-sm text-[#8b949e] mb-1">Max Concurrent</p>
               <p className="text-lg font-semibold text-white">{workflowStatus.max_concurrent || 0}</p>
             </div>
-            <div className="animate-slide-in delay-1400">
-              <p className="text-sm text-[#8b949e] mb-1">Processing Interval</p>
-              <p className="text-lg font-semibold text-white">{workflowStatus.processing_interval || 0}s</p>
-            </div>
           </div>
+          
+          {/* Active Submissions List */}
+          {workflowStatus.active_submissions && workflowStatus.active_submissions.length > 0 && (
+            <div className="mt-4 p-4 bg-[#161b22] rounded-lg border border-[#30363d]">
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                <span className="animate-spin">⚙️</span>
+                Active Submissions ({workflowStatus.active_submissions.length})
+              </h3>
+              <div className="space-y-2">
+                {workflowStatus.active_submissions.map((active: any) => (
+                  <div key={active.submission_id} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[#8b949e] font-mono">#{active.submission_id}</span>
+                      <span className="text-purple-400">{active.message || 'Processing...'}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-24 h-2 bg-[#30363d] rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-purple-500 transition-all duration-300"
+                          style={{ width: `${active.progress || 0}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-[#8b949e] w-10 text-right">{active.progress || 0}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ) : null}
 
@@ -572,7 +686,9 @@ export default function Dashboard() {
             {(() => {
               const formData = parseFormData(selectedSubmission.form_data);
               const errorMsg = selectedSubmission.error_message || '';
-              const submissionStatus = selectedSubmission.status || 'pending';
+              // Check if submission is currently being processed
+              const isProcessing = workflowStatus?.active_submission_ids?.includes(selectedSubmission.id) || false;
+              const submissionStatus = isProcessing ? 'processing' : (selectedSubmission.status || 'pending');
               const isSuccessful = submissionStatus === 'submitted' || submissionStatus === 'approved';
               
               // Reconstruct workflow steps from available data
@@ -732,40 +848,83 @@ export default function Dashboard() {
               }
               
               // Step 6: Submit Form
-              if (errorMsg.toLowerCase().includes('submit')) {
+              // Check if submission was successful based on status and form data
+              const submitSuccess = isSuccessful || (formData && formData.fields_filled > 0 && !errorMsg);
+              const submitFailed = errorMsg.toLowerCase().includes('submit') || 
+                                   (formData && formData.fields_filled === 0) ||
+                                   (!isSuccessful && !isProcessing && errorMsg);
+              
+              if (submitFailed && !isSuccessful) {
+                // Only show as failed if there's an actual error and not successful
                 workflowSteps.push({
                   step: 6,
                   name: 'Submit Form',
                   status: 'failed',
-                  message: errorMsg,
+                  message: errorMsg.toLowerCase().includes('submit') 
+                    ? errorMsg 
+                    : formData && formData.fields_filled === 0
+                    ? 'Form submission failed - no fields were filled'
+                    : 'Form submission failed - could not complete submission',
                   timestamp: selectedSubmission.updated_at
                 });
-              } else if (formData && formData.fields_filled > 0) {
+              } else if (submitSuccess || isSuccessful) {
+                // Show as success if submission status is submitted/approved or form was filled successfully
                 workflowSteps.push({
                   step: 6,
                   name: 'Submit Form',
-                  status: 'failed',
-                  message: 'Form submission failed - could not complete submission',
-                  timestamp: selectedSubmission.updated_at
+                  status: 'success',
+                  message: isSuccessful 
+                    ? 'Form submitted successfully' 
+                    : formData && formData.fields_filled > 0
+                    ? `Form submitted successfully - ${formData.fields_filled} fields filled`
+                    : 'Form submission completed',
+                  timestamp: selectedSubmission.submitted_at || selectedSubmission.updated_at
                 });
               } else {
+                // Default to pending if still processing
                 workflowSteps.push({
                   step: 6,
                   name: 'Submit Form',
-                  status: 'failed',
-                  message: 'Form submission failed - no fields were filled',
+                  status: isProcessing ? 'pending' : 'failed',
+                  message: isProcessing 
+                    ? 'Submitting form...' 
+                    : 'Form submission status unclear',
                   timestamp: selectedSubmission.updated_at
                 });
               }
               
               // Step 7: Verify Submission
-              workflowSteps.push({
-                step: 7,
-                name: 'Verify Submission',
-                status: 'failed',
-                message: 'Submission verification failed - submission was not successful',
-                timestamp: selectedSubmission.updated_at
-              });
+              // Check if submission was verified as successful
+              if (isSuccessful) {
+                workflowSteps.push({
+                  step: 7,
+                  name: 'Verify Submission',
+                  status: 'success',
+                  message: submissionStatus === 'approved' 
+                    ? 'Submission verified and approved' 
+                    : 'Submission verified successfully',
+                  timestamp: selectedSubmission.submitted_at || selectedSubmission.updated_at
+                });
+              } else if (submitFailed && !isProcessing) {
+                workflowSteps.push({
+                  step: 7,
+                  name: 'Verify Submission',
+                  status: 'failed',
+                  message: errorMsg || 'Submission verification failed - submission was not successful',
+                  timestamp: selectedSubmission.updated_at
+                });
+              } else {
+                // Still processing or status unclear
+                workflowSteps.push({
+                  step: 7,
+                  name: 'Verify Submission',
+                  status: isProcessing ? 'pending' : 'failed',
+                  message: isProcessing 
+                    ? 'Verifying submission...' 
+                    : 'Submission verification status unclear',
+                  timestamp: selectedSubmission.updated_at
+                });
+              }
               
               return (
                 <div className="mb-6">
@@ -774,7 +933,12 @@ export default function Dashboard() {
                       <span>📋</span>
                       Workflow Execution Log
                     </h3>
-                    {isSuccessful ? (
+                    {isProcessing ? (
+                      <span className="px-3 py-1 rounded-full text-sm font-medium border bg-purple-500/20 text-purple-400 border-purple-500/30 flex items-center gap-2">
+                        <span className="animate-spin">⏳</span>
+                        PROCESSING
+                      </span>
+                    ) : isSuccessful ? (
                       <span className={`px-3 py-1 rounded-full text-sm font-medium border ${
                         submissionStatus === 'approved' 
                           ? 'bg-green-500/20 text-green-400 border-green-500/30'
@@ -786,11 +950,55 @@ export default function Dashboard() {
                       <span className="px-3 py-1 rounded-full text-sm font-medium bg-red-500/20 text-red-400 border border-red-500/30">
                         FAILED
                       </span>
-                    ) : null}
+                    ) : (
+                      <span className="px-3 py-1 rounded-full text-sm font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+                        PENDING
+                      </span>
+                    )}
                   </div>
                   
+                  {/* Processing Indicator - Show when submission is being processed */}
+                  {isProcessing && (
+                    <div className="mb-4 p-4 bg-purple-500/10 border-2 border-purple-500/30 rounded-lg">
+                      <h4 className="font-bold text-purple-400 mb-2 flex items-center gap-2">
+                        <span className="animate-spin">⚙️</span>
+                        Processing Submission...
+                      </h4>
+                      <div className="space-y-2 font-medium text-purple-300">
+                        {(() => {
+                          const progress = workflowStatus?.active_submissions?.find((a: any) => a.submission_id === selectedSubmission.id);
+                          if (progress) {
+                            return (
+                              <>
+                                <p>{progress.message || 'Processing submission...'}</p>
+                                <div className="mt-2">
+                                  <div className="flex items-center justify-between text-sm mb-1">
+                                    <span>Progress</span>
+                                    <span>{progress.progress || 0}%</span>
+                                  </div>
+                                  <div className="w-full h-2 bg-[#30363d] rounded-full overflow-hidden">
+                                    <div 
+                                      className="h-full bg-purple-500 transition-all duration-300"
+                                      style={{ width: `${progress.progress || 0}%` }}
+                                    />
+                                  </div>
+                                </div>
+                                {progress.started_at && (
+                                  <p className="text-sm opacity-75 mt-2">
+                                    Started: {new Date(progress.started_at).toLocaleString()}
+                                  </p>
+                                )}
+                              </>
+                            );
+                          }
+                          return <p>Submission is being processed...</p>;
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                  
                   {/* Success Summary - Show at top for successful submissions */}
-                  {isSuccessful && (
+                  {!isProcessing && isSuccessful && (
                     <div className={`mb-4 p-4 border-2 rounded-lg ${
                       submissionStatus === 'approved'
                         ? 'bg-green-500/10 border-green-500/30'
@@ -1203,42 +1411,62 @@ export default function Dashboard() {
 
             {/* Actions */}
             <div className="flex gap-3 mt-6">
-              {selectedSubmission.status === 'failed' && (
-                <button
-                  onClick={() => {
-                    handleRetry(selectedSubmission.id);
-                    closeDetailsModal();
-                  }}
-                  disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
-                  className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {retrying === selectedSubmission.id ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="animate-spin">⏳</span>
-                      Retrying...
-                    </span>
-                  ) : (
-                    'Retry Submission'
-                  )}
-                </button>
-              )}
-              <button
-                onClick={() => {
-                  handleDelete(selectedSubmission.id);
-                  closeDetailsModal();
-                }}
-                disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
-                className="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {deleting === selectedSubmission.id ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="animate-spin">⏳</span>
-                    Deleting...
-                  </span>
-                ) : (
-                  'Delete'
-                )}
-              </button>
+              {(() => {
+                const isCurrentlyProcessing = workflowStatus?.active_submission_ids?.includes(selectedSubmission.id) || false;
+                const displayStatus = isCurrentlyProcessing ? 'processing' : selectedSubmission.status;
+                
+                if (isCurrentlyProcessing) {
+                  return (
+                    <div className="flex-1 p-4 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                      <p className="text-purple-400 text-sm flex items-center gap-2">
+                        <span className="animate-spin">⏳</span>
+                        Submission is currently being processed. Please wait...
+                      </p>
+                    </div>
+                  );
+                }
+                
+                return (
+                  <>
+                    {displayStatus === 'failed' && (
+                      <button
+                        onClick={() => {
+                          handleRetry(selectedSubmission.id);
+                          closeDetailsModal();
+                        }}
+                        disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
+                        className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {retrying === selectedSubmission.id ? (
+                          <span className="flex items-center justify-center gap-2">
+                            <span className="animate-spin">⏳</span>
+                            Retrying...
+                          </span>
+                        ) : (
+                          'Retry Submission'
+                        )}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        handleDelete(selectedSubmission.id);
+                        closeDetailsModal();
+                      }}
+                      disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
+                      className="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {deleting === selectedSubmission.id ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <span className="animate-spin">⏳</span>
+                          Deleting...
+                        </span>
+                      ) : (
+                        'Delete'
+                      )}
+                    </button>
+                  </>
+                );
+              })()}
               <button
                 onClick={closeDetailsModal}
                 className="btn btn-secondary"

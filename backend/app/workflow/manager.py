@@ -278,10 +278,11 @@ class WorkflowManager:
                 "logo_path": saas.logo_path or ""
             }
             
-            # Update status to "submitted" (processing)
-            update_submission(db, submission_id, SubmissionUpdate(status="submitted"))
+            # Keep status as "pending" until workflow completes
+            # Don't update status here - let it remain "pending" until we know the final result
+            # This ensures UI shows "pending" until workflow is truly done
             
-            # Update progress: Analyzing form
+            # Update progress: Starting workflow
             self.progress_tracking[submission_id].update({
                 "status": "analyzing_form",
                 "progress": 20,
