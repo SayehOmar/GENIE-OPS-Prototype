@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.workflow.manager import get_workflow_manager
 from app.automation.browser_pool import start_browser_pool, stop_browser_pool
-from app.utils.logger import logger
+from app.utils.logger import logger, print_color_legend
 
 
 @asynccontextmanager
@@ -15,6 +15,9 @@ async def lifespan(app: FastAPI):
     """
     Lifespan context manager for startup and shutdown events
     """
+    # Print color legend on startup
+    print_color_legend()
+    
     # Startup
     logger.info("Starting GENIE OPS API...")
     

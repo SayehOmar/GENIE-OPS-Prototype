@@ -74,9 +74,34 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
+# Track if logger has been initialized to prevent duplicates
+_logger_initialized = False
+
 # Configure logging with colored formatter
 def setup_logger():
     """Setup logger with colored output"""
+    global _logger_initialized
+    
+    logger = logging.getLogger("genie_ops")
+    
+    # Prevent duplicate handlers - only setup once per process
+    if _logger_initialized:
+        # Still ensure propagate is False to prevent duplicates
+        logger.propagate = False
+        return logger
+    
+    # Clear any existing handlers to prevent duplicates
+    logger.handlers.clear()
+    
+    # Disable basicConfig if it was called (prevents root logger handlers)
+    logging.basicConfig(level=logging.NOTSET, handlers=[])
+    
+    # Also remove handlers from root logger if they exist
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        if isinstance(handler, logging.StreamHandler) and handler.stream == sys.stdout:
+            root_logger.removeHandler(handler)
+    
     handler = logging.StreamHandler(sys.stdout)
     
     # Use colored formatter if output is a TTY (terminal)
@@ -88,11 +113,29 @@ def setup_logger():
     
     handler.setFormatter(formatter)
     
-    logger = logging.getLogger("genie_ops")
     logger.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
     logger.addHandler(handler)
     
+    # Prevent propagation to root logger to avoid duplicate messages
+    logger.propagate = False
+    
+    _logger_initialized = True
+    
     return logger
+
+
+def print_color_legend():
+    """Print color legend for log messages"""
+    print("\n" + "=" * 80)
+    print(f"{Colors.BOLD}GENIE OPS - Log Color Legend{Colors.RESET}")
+    print("=" * 80)
+    print(f"{Colors.GREEN}GREEN{Colors.RESET}    - Success messages (successful, completed, approved, submitted, saved, created)")
+    print(f"{Colors.RED}RED{Colors.RESET}      - Error messages (error, failed, failure, exception, crash, timeout, rejected)")
+    print(f"{Colors.BLUE}BLUE{Colors.RESET}     - Info messages (info, status, progress, update)")
+    print(f"{Colors.YELLOW}YELLOW{Colors.RESET}   - Warning messages (warning, retry, skipped, fallback, partial)")
+    print(f"{Colors.PURPLE}PURPLE{Colors.RESET}   - Processing messages (processing, starting, initializing, navigating, filling, submitting, analyzing)")
+    print(f"{Colors.CYAN}CYAN{Colors.RESET}     - Debug messages (detailed information)")
+    print("=" * 80 + "\n")
 
 
 # Initialize logger

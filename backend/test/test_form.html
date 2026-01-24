@@ -199,55 +199,30 @@
                     }
                 }
 
-                // Log to console (for testing)
-                console.log('Form submitted with data:', data);
-
-                // Save submission report directly as a downloadable file
+                // Log submission success to console with timestamp and data
                 const timestamp = new Date().toISOString();
-                const timestampStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                const submissionLog = {
+                    timestamp: timestamp,
+                    status: 'SUCCESS',
+                    message: 'Form submission successful',
+                    url: window.location.href,
+                    form_data: data
+                };
                 
-                // Determine analysis method
-                const analysisMethod = data.analysis_method || 'unknown';
-                const methodLabel = analysisMethod === 'ai' ? 'AI (Ollama)' : 
-                                   analysisMethod === 'dom' ? 'DOM Extraction' : 'Unknown';
-
-                // Format submission data
-                let reportContent = '='.repeat(60) + '\n';
-                reportContent += 'FORM SUBMISSION DATA\n';
-                reportContent += '='.repeat(60) + '\n';
-                reportContent += `Timestamp: ${timestamp}\n`;
-                reportContent += `URL: ${window.location.href}\n`;
-                reportContent += `Saved at: ${new Date().toISOString()}\n`;
-                reportContent += `Analysis Method: ${methodLabel} (${analysisMethod})\n`;
-                reportContent += '\n';
-                reportContent += 'Form Data:\n';
-                reportContent += '-'.repeat(60) + '\n';
+                // Log to console with formatted output
+                console.log('%c========================================', 'color: green; font-weight: bold; font-size: 14px;');
+                console.log('%cFORM SUBMISSION SUCCESS', 'color: green; font-weight: bold; font-size: 16px;');
+                console.log('%c========================================', 'color: green; font-weight: bold; font-size: 14px;');
+                console.log(`%cTimestamp: ${timestamp}`, 'color: blue; font-weight: bold;');
+                console.log(`%cURL: ${window.location.href}`, 'color: blue;');
+                console.log('%cSubmitted Data:', 'color: purple; font-weight: bold;');
+                console.table(data);
+                console.log('%c========================================', 'color: green; font-weight: bold; font-size: 14px;');
                 
-                // Add form fields (exclude analysis_method from display since it's shown above)
-                for (const [key, value] of Object.entries(data)) {
-                    if (key !== 'analysis_method') {
-                        reportContent += `${key}: ${value}\n`;
-                    }
-                }
-                
-                reportContent += '\n';
-                reportContent += '='.repeat(60) + '\n';
-                reportContent += 'End of Submission\n';
-                reportContent += '='.repeat(60) + '\n';
-
-                // Create and download the file
-                const blob = new Blob([reportContent], { type: 'text/plain' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `form_submission_${timestampStr}.txt`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+                // Also log as JSON for easy parsing
+                console.log('Submission JSON:', JSON.stringify(submissionLog, null, 2));
 
                 // Success - show success message
-                console.log('Submission report downloaded successfully');
                 document.getElementById('successMessage').style.display = 'block';
                 document.getElementById('errorMessage').style.display = 'none';
                 
