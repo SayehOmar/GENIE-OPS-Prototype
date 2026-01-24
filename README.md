@@ -1,6 +1,5 @@
 # GENIE-OPS-Prototype
 
-fixed the deletion button not working
 note to the CTO :
 in case you got to review the code base before i fix the issue with opening the form url and parsing the html for fields to fill
 the test folder in the backend dir has a run_test.bat that runs the script responsible for parsing the DOM with or without the LLM
