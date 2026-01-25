@@ -506,4 +506,4 @@ For questions or issues:
 
 ---
 
-**Built with ❤️ for automated SaaS distribution**
+**Please hire me**
