@@ -2,11 +2,12 @@
 Job/workflow API routes for managing submission jobs
 """
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
 import asyncio
+from app.utils.rate_limit import limiter, get_rate_limit
 from app.db.crud import (
     get_saas_by_id,
     get_directory_by_id,
@@ -44,7 +45,9 @@ class JobResponse(BaseModel):
 
 
 @router.post("/start", response_model=JobResponse)
+@limiter.limit(get_rate_limit("jobs"))
 async def start_submission_job(
+    request: Request,
     job_request: StartJobRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -308,7 +311,8 @@ async def process_submission(
 
 
 @router.get("/workflow/status")
-async def get_workflow_status():
+@limiter.limit(get_rate_limit("stats"))
+async def get_workflow_status(request: Request):
     """
     Get the current status of the workflow manager with detailed active submission information.
     
@@ -371,7 +375,8 @@ async def get_workflow_status():
 
 
 @router.post("/workflow/process-pending")
-async def trigger_processing():
+@limiter.limit(get_rate_limit("jobs"))
+async def trigger_processing(request: Request):
     """
     Manually trigger processing of pending submissions
     """
@@ -393,7 +398,9 @@ async def retry_failed_submissions(max_age_hours: int = 24):
 
 
 @router.post("/process-all")
+@limiter.limit(get_rate_limit("jobs"))
 async def process_all_pending(
+    request: Request,
     limit: Optional[int] = None,
     background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
@@ -495,7 +502,8 @@ async def process_saas_submissions(
 
 
 @router.get("/progress/{submission_id}")
-async def get_submission_progress(submission_id: int):
+@limiter.limit(get_rate_limit("stats"))
+async def get_submission_progress(request: Request, submission_id: int):
     """
     Get real-time progress for a specific submission.
     

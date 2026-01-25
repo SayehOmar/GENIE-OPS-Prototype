@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     WORKFLOW_PROCESSING_INTERVAL: int = 30  # Seconds between processing cycles
     WORKFLOW_MAX_RETRIES: int = 3  # Max retry attempts per submission
     
+    # Rate Limiting
+    RATE_LIMIT_ENABLED: bool = True  # Enable/disable rate limiting
+    RATE_LIMIT_STORAGE_URI: str = "memory://"  # Use in-memory storage (can use Redis for distributed)
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

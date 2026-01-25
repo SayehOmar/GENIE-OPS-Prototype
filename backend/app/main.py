@@ -2,12 +2,15 @@
 FastAPI entry point
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.workflow.manager import get_workflow_manager
 from app.automation.browser_pool import start_browser_pool, stop_browser_pool
 from app.utils.logger import logger, print_color_legend
+from app.utils.rate_limit import limiter, rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 
 @asynccontextmanager
@@ -57,6 +60,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Initialize rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
 # CORS middleware - must be added before routes
 # Configure to handle redirects properly
 app.add_middleware(
@@ -81,10 +88,12 @@ app.include_router(testing.router, prefix="/api/testing", tags=["testing"])
 
 
 @app.get("/")
-async def root():
+@limiter.limit("100/minute")
+async def root(request: Request):
     return {"message": "GENIE OPS API", "version": "1.0.0"}
 
 
 @app.get("/health")
-async def health():
+@limiter.limit("200/minute")
+async def health(request: Request):
     return {"status": "healthy"}

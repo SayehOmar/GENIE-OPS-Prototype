@@ -1,7 +1,7 @@
 """
 Submissions API routes
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.db.crud import (
@@ -16,12 +16,15 @@ from app.db.crud import (
 from app.db.models import Submission, SubmissionCreate, SubmissionUpdate
 from app.db.session import get_db
 from app.core.security import get_current_user
+from app.utils.rate_limit import limiter, get_rate_limit
 
 router = APIRouter()
 
 
 @router.get("/", response_model=List[Submission])
+@limiter.limit(get_rate_limit("submissions"))
 async def list_submissions(
+    request: Request,
     saas_id: Optional[int] = Query(None, description="Filter by SaaS ID"),
     directory_id: Optional[int] = Query(None, description="Filter by Directory ID"),
     db: Session = Depends(get_db)
@@ -217,7 +220,9 @@ async def get_submission_stats(
 
 
 @router.post("/{submission_id}/retry")
+@limiter.limit(get_rate_limit("submissions"))
 async def retry_submission(
+    request: Request,
     submission_id: int,
     db: Session = Depends(get_db)
 ):

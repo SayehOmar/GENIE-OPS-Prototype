@@ -1,7 +1,7 @@
 """
 Directory-related API routes
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List
 from app.db.crud import (
@@ -14,6 +14,7 @@ from app.db.crud import (
 from app.db.models import Directory, DirectoryBase
 from app.db.session import get_db
 from app.core.security import get_current_user
+from app.utils.rate_limit import limiter, get_rate_limit
 
 router = APIRouter()
 

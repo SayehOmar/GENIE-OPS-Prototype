@@ -1,16 +1,18 @@
 """
 Authentication API routes
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from app.core.security import verify_password, create_access_token, get_current_user
+from app.utils.rate_limit import limiter, get_rate_limit
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 
 
 @router.post("/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit(get_rate_limit("auth"))
+async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     """
     User login endpoint
     """
