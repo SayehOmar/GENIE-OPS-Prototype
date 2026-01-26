@@ -387,12 +387,15 @@ Get submission statistics.
 
 Retry a failed or pending submission.
 
+Resets the submission status to "pending" and resets auto-retry stop count.
+If status was auto_retry_failed_{x}, it resets to "pending" and clears the stop count.
+
 **Rate Limit:** 30 requests/minute
 
 **Response:**
 ```json
 {
-  "message": "Submission queued for retry",
+  "message": "Submission queued for retry (auto-retry stop count reset)",
   "submission": {
     "id": 1,
     "status": "pending",
@@ -400,6 +403,30 @@ Retry a failed or pending submission.
     ...
   },
   "retry_count": 1
+}
+```
+
+### POST `/api/submissions/{submission_id}/stop-retry`
+
+Stop automatic retry for a failed submission.
+
+Sets status to auto_retry_failed_{x} where x increments from 1 to 5.
+When x reaches 5, status becomes "failed" permanently.
+This prevents the workflow manager from automatically retrying this submission.
+
+**Rate Limit:** 30 requests/minute
+
+**Response:**
+```json
+{
+  "message": "Auto-retry stopped (stop count: 1/5)",
+  "submission": {
+    "id": 1,
+    "status": "auto_retry_failed_1",
+    "error_message": "Auto-retry stopped by user (stop count: 1/5)",
+    ...
+  },
+  "auto_retry_stop_count": 1
 }
 ```
 
@@ -474,6 +501,43 @@ Get current workflow manager status.
     }
   ],
   "queue_length": 3
+}
+```
+
+### POST `/api/jobs/workflow/start`
+
+Start the workflow manager (enable automatic processing).
+
+**Rate Limit:** 20 requests/minute
+
+**Response:**
+```json
+{
+  "message": "Workflow manager started",
+  "status": {
+    "is_running": true,
+    "active_tasks": 0,
+    "max_concurrent": 1,
+    ...
+  }
+}
+```
+
+### POST `/api/jobs/workflow/stop`
+
+Stop the workflow manager (disable automatic processing).
+
+**Rate Limit:** 20 requests/minute
+
+**Response:**
+```json
+{
+  "message": "Workflow manager stopped",
+  "status": {
+    "is_running": false,
+    "active_tasks": 0,
+    ...
+  }
 }
 ```
 

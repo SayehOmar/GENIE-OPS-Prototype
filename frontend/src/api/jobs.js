@@ -48,6 +48,14 @@ export function getWorkflowStatus() {
   return get('/api/jobs/workflow/status');
 }
 
+export function startWorkflow() {
+  return post('/api/jobs/workflow/start');
+}
+
+export function stopWorkflow() {
+  return post('/api/jobs/workflow/stop');
+}
+
 /**
  * Manually trigger processing of pending submissions
  * Forces the workflow manager to process pending submissions immediately

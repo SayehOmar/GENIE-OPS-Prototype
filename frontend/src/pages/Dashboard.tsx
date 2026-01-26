@@ -4,11 +4,21 @@ import { SkeletonCard } from '../components/Skeleton';
 // @ts-ignore - JS module
 import { getSaaSList } from '../api/saas';
 // @ts-ignore - JS module
-import { getSubmissionStats, getSubmissions, retrySubmission, deleteSubmission } from '../api/submissions';
+import { getSubmissionStats, getSubmissions, retrySubmission, deleteSubmission, stopAutoRetry } from '../api/submissions';
 // @ts-ignore - JS module
 import { getDirectories } from '../api/directories';
 // @ts-ignore - JS module
-import { getWorkflowStatus } from '../api/jobs';
+import { getWorkflowStatus, startWorkflow, stopWorkflow } from '../api/jobs';
+
+interface WorkflowStep {
+  step: number;
+  name: string;
+  status: 'success' | 'failed' | 'pending' | 'warning' | 'partial';
+  message: string;
+  timestamp: string | null;
+  duration?: number | null;
+  errors?: string[];
+}
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -31,7 +41,47 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [retrying, setRetrying] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [stoppingRetry, setStoppingRetry] = useState<number | null>(null);
   const [selectedSubmission, setSelectedSubmission] = useState<any | null>(null);
+  const [togglingWorkflow, setTogglingWorkflow] = useState(false);
+  const [retryTimers, setRetryTimers] = useState<Record<number, number>>({}); // Timer for each failed submission
+
+  // Countdown timer effect for failed submissions (30s countdown after each failure)
+  useEffect(() => {
+    // Only run timer if workflow is running (asyncio mode is on)
+    if (!workflowStatus?.is_running) {
+      setRetryTimers({});
+      return;
+    }
+    
+    const timerInterval = setInterval(() => {
+      const now = new Date().getTime();
+      const newTimers: Record<number, number> = {};
+      
+      // Calculate countdown for each failed submission
+      failedSubmissions.forEach((sub: any) => {
+        // Only show timer for failed submissions that are eligible for auto-retry
+        // (not permanently failed - retry_count < 5)
+        const isEligibleForAutoRetry = (sub.status === 'failed' || 
+          (sub.status && sub.status.startsWith('auto_retry_failed_'))) &&
+          (sub.retry_count || 0) < 5;
+        
+        if (isEligibleForAutoRetry && sub.updated_at) {
+          const failedTime = new Date(sub.updated_at).getTime();
+          const elapsed = Math.floor((now - failedTime) / 1000); // seconds since failure
+          const remaining = Math.max(0, 30 - elapsed); // 30 seconds countdown
+          
+          if (remaining > 0) {
+            newTimers[sub.id] = remaining;
+          }
+        }
+      });
+      
+      setRetryTimers(newTimers);
+    }, 1000); // Update every second
+    
+    return () => clearInterval(timerInterval);
+  }, [failedSubmissions, workflowStatus?.is_running]);
 
   useEffect(() => {
     loadDashboardData();
@@ -104,9 +154,9 @@ export default function Dashboard() {
         .slice(0, 5);
       setRecentSubmissions(recent);
 
-      // Get failed submissions (for retry section)
+      // Get failed submissions (for retry section) - include both "failed" and "auto_retry_failed_{x}" statuses
       const failed = enriched
-        .filter((s: any) => s.status === 'failed')
+        .filter((s: any) => s.status === 'failed' || (s.status && s.status.startsWith('auto_retry_failed_')))
         .sort((a: any, b: any) => 
           new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()
         )
@@ -131,17 +181,37 @@ export default function Dashboard() {
   }
 
   async function handleRetry(submissionId: number) {
-    if (!confirm('Retry this failed submission?')) return;
+    if (!confirm('Retry this failed submission? This will reset the auto-retry stop count.')) return;
 
     setRetrying(submissionId);
     try {
       await retrySubmission(submissionId);
       await loadDashboardData();
-      alert('Submission queued for retry');
+      alert('Submission queued for retry (auto-retry stop count reset)');
     } catch (error: any) {
       alert(error.message || 'Failed to retry submission');
     } finally {
       setRetrying(null);
+    }
+  }
+
+  async function handleStopAutoRetry(submissionId: number) {
+    if (!confirm('Stop automatic retry for this submission? The system will stop retrying this submission automatically. You can still retry manually.')) return;
+
+    setStoppingRetry(submissionId);
+    try {
+      const result = await stopAutoRetry(submissionId);
+      await loadDashboardData();
+      const stopCount = result.auto_retry_stop_count || 0;
+      if (stopCount >= 5) {
+        alert('Auto-retry stopped permanently. This submission will not be retried automatically anymore.');
+      } else {
+        alert(`Auto-retry stopped (stop count: ${stopCount}/5). The system will stop retrying after ${5 - stopCount} more stops.`);
+      }
+    } catch (error: any) {
+      alert(`Failed to stop auto-retry: ${error.message || 'Unknown error'}`);
+    } finally {
+      setStoppingRetry(null);
     }
   }
 
@@ -324,14 +394,31 @@ export default function Dashboard() {
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
                     <span className="text-sm text-[#8b949e] font-mono">#{sub.id}</span>
-                    <span className="px-2 py-1 rounded text-xs font-medium bg-red-500/10 text-red-400">
-                      FAILED
-                    </span>
-                    {sub.retry_count > 0 && (
-                      <span className="text-xs text-yellow-400" title="Retry attempts">
-                        {sub.retry_count} retries
-                      </span>
-                    )}
+                    {(() => {
+                      // Check if auto-retry is stopped - use retry_count from DB
+                      const isAutoRetryStopped = sub.status && sub.status.startsWith('auto_retry_failed_');
+                      // Use retry_count from database as stop count
+                      const stopCount = sub.retry_count || 0;
+                      
+                      return (
+                        <>
+                          {isAutoRetryStopped ? (
+                            <span className="px-2 py-1 rounded text-xs font-medium bg-orange-500/10 text-orange-400" title={`Auto-retry stopped (${stopCount}/5 stops)`}>
+                              AUTO-RETRY STOPPED ({stopCount}/5)
+                            </span>
+                          ) : (
+                            <span className="px-2 py-1 rounded text-xs font-medium bg-red-500/10 text-red-400">
+                              FAILED
+                            </span>
+                          )}
+                          {sub.retry_count > 0 && (
+                            <span className="text-xs text-yellow-400" title="Retry attempts">
+                              {sub.retry_count} retries
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                   <div className="text-sm text-white mb-1">
                     <strong>{sub.saas?.name || `SaaS #${sub.saas_id}`}</strong>
@@ -350,13 +437,23 @@ export default function Dashboard() {
                     Click to view details →
                   </p>
                 </div>
-                <div className="flex gap-2 ml-4">
+                <div className="flex gap-2 ml-4 items-center">
+                  {/* Countdown Timer - only show for failed submissions with auto-retry enabled */}
+                  {workflowStatus?.is_running && 
+                   (sub.status === 'failed' || (sub.status && sub.status.startsWith('auto_retry_failed_'))) &&
+                   retryTimers[sub.id] !== undefined && 
+                   retryTimers[sub.id] > 0 && (
+                    <div className="flex items-center gap-1 px-2 py-1 bg-orange-500/10 border border-orange-500/20 rounded text-xs text-orange-400">
+                      <span>⏱️</span>
+                      <span className="font-mono font-semibold">{retryTimers[sub.id]}s</span>
+                    </div>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       handleRetry(sub.id);
                     }}
-                    disabled={retrying === sub.id || deleting === sub.id}
+                    disabled={retrying === sub.id || deleting === sub.id || stoppingRetry === sub.id}
                     className="btn btn-secondary text-sm px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {retrying === sub.id ? (
@@ -368,12 +465,58 @@ export default function Dashboard() {
                       'Retry'
                     )}
                   </button>
+                  {/* Stop Retrying button - only show when workflow is running and submission is failed or auto_retry_stopped */}
+                  {workflowStatus?.is_running && (sub.status === 'failed' || (sub.status && sub.status.startsWith('auto_retry_failed_'))) && (
+                    <div className="relative group">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStopAutoRetry(sub.id);
+                        }}
+                        disabled={retrying === sub.id || deleting === sub.id || stoppingRetry === sub.id}
+                        className="btn bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 border-orange-500/30 text-sm px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {stoppingRetry === sub.id ? (
+                          <span className="flex items-center gap-2">
+                            <span className="animate-spin">⏳</span>
+                            Stopping...
+                          </span>
+                        ) : (
+                          'Stop Retrying'
+                        )}
+                      </button>
+                      {/* Tooltip */}
+                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-3 bg-[#161b22] border border-[#30363d] rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                        <div className="text-xs text-white">
+                          <p className="font-semibold mb-1">Auto-Retry Stop</p>
+                          <p className="text-[#8b949e] mb-2">
+                            Stops automatic retry attempts. Each stop increments the retry counter (1-5). After 5 stops, auto-retry is permanently disabled. You can still retry manually using the Retry button, which will reset the counter to 0.
+                          </p>
+                          <p className="text-[#8b949e] text-[10px]">
+                            Current stop count: {sub.retry_count || 0}/5 
+                          </p>
+                        </div>
+                        <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
+                          <div className="w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-[#30363d]"></div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedSubmission(sub);
+                    }}
+                    className="btn btn-secondary text-sm px-4 py-2"
+                  >
+                    View Logs
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       handleDelete(sub.id);
                     }}
-                    disabled={retrying === sub.id || deleting === sub.id}
+                    disabled={retrying === sub.id || deleting === sub.id || stoppingRetry === sub.id}
                     className="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border-red-500/30 text-sm px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {deleting === sub.id ? (
@@ -561,7 +704,47 @@ export default function Dashboard() {
         <SkeletonCard />
       ) : workflowStatus ? (
         <div className="card animate-fade-in delay-1000">
-          <h2 className="text-xl font-semibold text-white mb-4">Workflow Manager Status</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-white">Workflow Manager Status</h2>
+            {/* Toggle Button */}
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-[#8b949e]">
+                {workflowStatus.is_running ? 'Auto-processing enabled' : 'Auto-processing disabled'}
+              </span>
+              <button
+                onClick={async () => {
+                  setTogglingWorkflow(true);
+                  try {
+                    if (workflowStatus.is_running) {
+                      await stopWorkflow();
+                    } else {
+                      await startWorkflow();
+                    }
+                    // Reload workflow status and dashboard data
+                    const status = await getWorkflowStatus();
+                    setWorkflowStatus(status);
+                    // Reload dashboard to reflect changes
+                    loadDashboardData();
+                  } catch (error) {
+                    console.error('Error toggling workflow:', error);
+                    alert('Failed to toggle workflow manager. Please try again.');
+                  } finally {
+                    setTogglingWorkflow(false);
+                  }
+                }}
+                disabled={togglingWorkflow}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#58a6ff] focus:ring-offset-2 focus:ring-offset-[#0d1117] disabled:opacity-50 disabled:cursor-not-allowed ${
+                  workflowStatus.is_running ? 'bg-green-500' : 'bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    workflowStatus.is_running ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <div className="animate-slide-in delay-1100">
               <p className="text-sm text-[#8b949e] mb-1">Status</p>
@@ -654,7 +837,16 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <span className="text-[#8b949e]">Status:</span>
-                  <p className="text-red-400 font-medium">FAILED</p>
+                  {(() => {
+                    const isAutoRetryStopped = selectedSubmission.status && selectedSubmission.status.startsWith('auto_retry_failed_');
+                    // Use retry_count from database as stop count
+                    const stopCount = selectedSubmission.retry_count || 0;
+                    return (
+                      <p className={`font-medium ${isAutoRetryStopped ? 'text-orange-400' : 'text-red-400'}`}>
+                        {isAutoRetryStopped ? `AUTO-RETRY STOPPED (${stopCount}/5)` : 'FAILED'}
+                      </p>
+                    );
+                  })()}
                 </div>
                 <div>
                   <span className="text-[#8b949e]">Retry Count:</span>
@@ -692,7 +884,7 @@ export default function Dashboard() {
               const isSuccessful = submissionStatus === 'submitted' || submissionStatus === 'approved';
               
               // Reconstruct workflow steps from available data
-              const workflowSteps = [];
+              const workflowSteps: WorkflowStep[] = [];
               
               // Step 1: Navigation
               // Check if navigation failed by looking at error message
@@ -947,9 +1139,20 @@ export default function Dashboard() {
                         {submissionStatus === 'approved' ? 'APPROVED' : 'SUBMITTED'}
                       </span>
                     ) : errorMsg ? (
-                      <span className="px-3 py-1 rounded-full text-sm font-medium bg-red-500/20 text-red-400 border border-red-500/30">
-                        FAILED
-                      </span>
+                      (() => {
+                        const isAutoRetryStopped = submissionStatus && submissionStatus.startsWith('auto_retry_failed_');
+                        // Use retry_count from database as stop count
+                        const stopCount = selectedSubmission.retry_count || 0;
+                        return isAutoRetryStopped ? (
+                          <span className="px-3 py-1 rounded-full text-sm font-medium bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                            AUTO-RETRY STOPPED ({stopCount}/5)
+                          </span>
+                        ) : (
+                          <span className="px-3 py-1 rounded-full text-sm font-medium bg-red-500/20 text-red-400 border border-red-500/30">
+                            FAILED
+                          </span>
+                        );
+                      })()
                     ) : (
                       <span className="px-3 py-1 rounded-full text-sm font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
                         PENDING
@@ -1123,7 +1326,7 @@ export default function Dashboard() {
                                   )}
                                   {idx > 0 && workflowSteps[idx - 1].timestamp && step.timestamp && (
                                     <span className="text-xs text-[#58a6ff]">
-                                      (Duration: {Math.round((new Date(step.timestamp).getTime() - new Date(workflowSteps[idx - 1].timestamp).getTime()) / 1000)}s)
+                                      (Duration: {Math.round((new Date(step.timestamp).getTime() - new Date(workflowSteps[idx - 1].timestamp!).getTime()) / 1000)}s)
                                     </span>
                                   )}
                                 </div>
@@ -1145,7 +1348,7 @@ export default function Dashboard() {
                       {workflowSteps.map((step, idx) => {
                         const stepTime = step.timestamp ? new Date(step.timestamp) : null;
                         const prevStepTime = idx > 0 && workflowSteps[idx - 1].timestamp 
-                          ? new Date(workflowSteps[idx - 1].timestamp) 
+                          ? new Date(workflowSteps[idx - 1].timestamp!) 
                           : null;
                         const duration = stepTime && prevStepTime 
                           ? Math.round((stepTime.getTime() - prevStepTime.getTime()) / 1000)
@@ -1426,33 +1629,74 @@ export default function Dashboard() {
                   );
                 }
                 
+                const isAutoRetryStopped = displayStatus && displayStatus.startsWith('auto_retry_failed_');
+                const isFailed = displayStatus === 'failed' || isAutoRetryStopped;
+                
                 return (
                   <>
-                    {displayStatus === 'failed' && (
-                      <button
-                        onClick={() => {
-                          handleRetry(selectedSubmission.id);
-                          closeDetailsModal();
-                        }}
-                        disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
-                        className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {retrying === selectedSubmission.id ? (
-                          <span className="flex items-center justify-center gap-2">
-                            <span className="animate-spin">⏳</span>
-                            Retrying...
-                          </span>
-                        ) : (
-                          'Retry Submission'
+                    {isFailed && (
+                      <>
+                        <button
+                          onClick={() => {
+                            handleRetry(selectedSubmission.id);
+                            closeDetailsModal();
+                          }}
+                          disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id || stoppingRetry === selectedSubmission.id}
+                          className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {retrying === selectedSubmission.id ? (
+                            <span className="flex items-center justify-center gap-2">
+                              <span className="animate-spin">⏳</span>
+                              Retrying...
+                            </span>
+                          ) : (
+                            'Retry Submission'
+                          )}
+                        </button>
+                        {/* Stop Retrying button in modal - only when workflow is running */}
+                        {workflowStatus?.is_running && (
+                          <div className="relative group">
+                            <button
+                              onClick={() => {
+                                handleStopAutoRetry(selectedSubmission.id);
+                              }}
+                              disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id || stoppingRetry === selectedSubmission.id}
+                              className="btn bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 border-orange-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {stoppingRetry === selectedSubmission.id ? (
+                                <span className="flex items-center justify-center gap-2">
+                                  <span className="animate-spin">⏳</span>
+                                  Stopping...
+                                </span>
+                              ) : (
+                                'Stop Retrying'
+                              )}
+                            </button>
+                            {/* Tooltip */}
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-3 bg-[#161b22] border border-[#30363d] rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                              <div className="text-xs text-white">
+                                <p className="font-semibold mb-1">Auto-Retry Stop</p>
+                                <p className="text-[#8b949e] mb-2">
+                                  Stops automatic retry attempts. Each stop increments a counter (1-5). After 5 stops, auto-retry is permanently disabled. You can still retry manually using the Retry button.
+                                </p>
+                                <p className="text-[#8b949e] text-[10px]">
+                                  Current stop count: {selectedSubmission.retry_count || 0}/5 (based on retry_count in database)
+                                </p>
+                              </div>
+                              <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
+                                <div className="w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-[#30363d]"></div>
+                              </div>
+                            </div>
+                          </div>
                         )}
-                      </button>
+                      </>
                     )}
                     <button
                       onClick={() => {
                         handleDelete(selectedSubmission.id);
                         closeDetailsModal();
                       }}
-                      disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id}
+                      disabled={retrying === selectedSubmission.id || deleting === selectedSubmission.id || stoppingRetry === selectedSubmission.id}
                       className="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {deleting === selectedSubmission.id ? (

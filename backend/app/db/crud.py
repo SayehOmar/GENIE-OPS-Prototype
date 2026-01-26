@@ -3,7 +3,8 @@ CRUD operations for database models
 """
 
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, text
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from app.db import models
 
@@ -98,9 +99,28 @@ def get_directory_by_id(db: Session, directory_id: int) -> Optional[DirectoryORM
     return db.query(DirectoryORM).filter(DirectoryORM.id == directory_id).first()
 
 
+def _fix_directories_sequence(db: Session) -> None:
+    """
+    Fix the PostgreSQL sequence for directories.id if it's out of sync.
+    This happens when data is inserted manually or sequences get out of sync.
+    """
+    try:
+        # Get the maximum ID currently in the table
+        result = db.execute(text("SELECT COALESCE(MAX(id), 0) FROM directories"))
+        max_id = result.scalar() or 0
+        
+        # Reset the sequence to the next value after the max ID
+        db.execute(text(f"SELECT setval('directories_id_seq', {max_id + 1}, false)"))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise Exception(f"Failed to fix directories sequence: {str(e)}")
+
+
 def create_directory(db: Session, directory_data: models.DirectoryBase) -> DirectoryORM:
     """
-    Create a new directory
+    Create a new directory.
+    Automatically fixes sequence issues if they occur.
     """
     db_directory = DirectoryORM(
         name=directory_data.name,
@@ -108,9 +128,25 @@ def create_directory(db: Session, directory_data: models.DirectoryBase) -> Direc
         description=directory_data.description,
     )
     db.add(db_directory)
-    db.commit()
-    db.refresh(db_directory)
-    return db_directory
+    
+    try:
+        db.commit()
+        db.refresh(db_directory)
+        return db_directory
+    except IntegrityError as e:
+        db.rollback()
+        # Check if it's a sequence issue (duplicate key on primary key)
+        if "duplicate key value violates unique constraint" in str(e) and "directories_pkey" in str(e):
+            # Fix the sequence and retry
+            _fix_directories_sequence(db)
+            # Retry the insert
+            db.add(db_directory)
+            db.commit()
+            db.refresh(db_directory)
+            return db_directory
+        else:
+            # Re-raise if it's a different integrity error
+            raise
 
 
 def update_directory(
@@ -255,7 +291,11 @@ def get_submission_statistics(db: Session, saas_id: Optional[int] = None) -> dic
     pending = query.filter(SubmissionORM.status == "pending").count()
     submitted = query.filter(SubmissionORM.status == "submitted").count()
     approved = query.filter(SubmissionORM.status == "approved").count()
-    failed = query.filter(SubmissionORM.status == "failed").count()
+    # Count both "failed" and "auto_retry_failed_{x}" as failed
+    failed = query.filter(
+        (SubmissionORM.status == "failed") | 
+        (SubmissionORM.status.like("auto_retry_failed_%"))
+    ).count()
 
     success_rate = 0.0
     if total > 0:

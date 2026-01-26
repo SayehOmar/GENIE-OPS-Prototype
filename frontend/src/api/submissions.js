@@ -78,3 +78,13 @@ export function getSubmissionStats(saasId = null) {
 export function retrySubmission(submissionId) {
   return post(`/api/submissions/${submissionId}/retry`);
 }
+
+/**
+ * Stop automatic retry for a failed submission
+ * Sets status to auto_retry_failed_{x} where x increments from 1 to 5
+ * @param {number} submissionId - Submission ID to stop auto-retry for
+ * @returns {Promise<Object>} Response with updated submission and stop count
+ */
+export function stopAutoRetry(submissionId) {
+  return post(`/api/submissions/${submissionId}/stop-retry`);
+}

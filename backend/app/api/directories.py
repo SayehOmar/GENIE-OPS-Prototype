@@ -3,6 +3,7 @@ Directory-related API routes
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List
 from app.db.crud import (
     get_directories,
@@ -51,7 +52,32 @@ async def create_directory_entry(
     """
     Create a new directory
     """
-    return create_directory(db, directory_data)
+    try:
+        return create_directory(db, directory_data)
+    except IntegrityError as e:
+        # Handle database integrity errors
+        error_msg = str(e)
+        if "duplicate key value violates unique constraint" in error_msg:
+            if "directories_pkey" in error_msg:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Database sequence error. The sequence has been automatically fixed. Please try again."
+                )
+            else:
+                # Other unique constraint violations (e.g., duplicate name or URL)
+                raise HTTPException(
+                    status_code=400,
+                    detail="A directory with this name or URL already exists."
+                )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {error_msg}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create directory: {str(e)}"
+        )
 
 
 @router.put("/{directory_id}", response_model=Directory)

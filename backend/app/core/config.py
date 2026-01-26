@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     WORKFLOW_MAX_CONCURRENT: int = 1  # Max concurrent submissions (1 = process one at a time)
     WORKFLOW_BATCH_SIZE: int = 10  # Batch size for processing
     WORKFLOW_PROCESSING_INTERVAL: int = 30  # Seconds between processing cycles
-    WORKFLOW_MAX_RETRIES: int = 3  # Max retry attempts per submission
+    WORKFLOW_MAX_RETRIES: int = 5  # Max retry attempts per submission
     
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = True  # Enable/disable rate limiting

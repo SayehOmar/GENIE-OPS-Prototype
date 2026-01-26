@@ -122,11 +122,14 @@ class WorkflowManager:
     
     async def _scheduler_loop(self):
         """
-        Main scheduler loop that periodically processes pending submissions
+        Main scheduler loop that periodically processes pending submissions and auto-retries failed ones
         """
         while self.is_running:
             try:
                 await self.process_pending_submissions()
+                # Also process failed submissions for auto-retry (only if workflow is running)
+                if self.is_running:
+                    await self.process_failed_submissions_auto_retry()
                 await asyncio.sleep(self.processing_interval)
             except asyncio.CancelledError:
                 break
@@ -347,22 +350,36 @@ class WorkflowManager:
                 })
             elif result.get("status") == "error":
                 error_msg = result.get("message", "Unknown error")
-                # Retry if under max retries
-                if submission.retry_count < self.max_retries - 1:
-                    update_data["status"] = "pending"
-                    update_data["retry_count"] = submission.retry_count + 1
-                    update_data["error_message"] = f"Retry {update_data['retry_count']}/{self.max_retries}: {error_msg}"
-                    logger.info(f"Submission {submission_id} will be retried: {update_data['error_message']}")
+                # Check if auto-retry is stopped
+                current_status = submission.status or "pending"
+                is_auto_retry_stopped = current_status.startswith("auto_retry_failed_")
+                
+                # Retry if under max retries and auto-retry is not stopped
+                if submission.retry_count < self.max_retries - 1 and not is_auto_retry_stopped:
+                    # Mark as failed - will be auto-retried after 30 seconds by scheduler
+                    update_data["status"] = "failed"
+                    update_data["error_message"] = error_msg
+                    logger.info(f"Submission {submission_id} failed, will be auto-retried after 30 seconds: {error_msg}")
                     # Update progress: Will retry
                     self.progress_tracking[submission_id].update({
                         "status": "failed_retry",
                         "progress": 0,
-                        "message": f"Failed, will retry: {error_msg}"
+                        "message": f"Failed, will auto-retry after 30s: {error_msg}"
                     })
                 else:
-                    update_data["status"] = "failed"
-                    update_data["error_message"] = error_msg
-                    logger.error(f"Submission {submission_id} failed after {submission.retry_count + 1} attempts")
+                    # Max retries reached or auto-retry stopped
+                    if is_auto_retry_stopped:
+                        # Keep the auto_retry_failed_{x} status and retry_count
+                        update_data["status"] = current_status
+                        update_data["retry_count"] = submission.retry_count  # Keep current retry_count
+                        update_data["error_message"] = f"Auto-retry stopped: {error_msg}"
+                        logger.info(f"Submission {submission_id} failed but auto-retry is stopped (retry_count: {submission.retry_count}): {error_msg}")
+                    else:
+                        update_data["status"] = "failed"
+                        update_data["error_message"] = error_msg
+                        update_data["retry_count"] = submission.retry_count  # Keep retry_count even when max reached
+                        logger.error(f"Submission {submission_id} failed after {submission.retry_count + 1} attempts (max: {self.max_retries})")
+                    
                     # Update progress: Failed
                     self.progress_tracking[submission_id].update({
                         "status": "failed",
@@ -470,6 +487,123 @@ class WorkflowManager:
     def get_submission_progress(self, submission_id: int) -> Optional[Dict]:
         """Get progress for a specific submission"""
         return self.progress_tracking.get(submission_id)
+    
+    async def process_failed_submissions_auto_retry(self):
+        """
+        Process failed submissions for automatic retry after 30 seconds.
+        
+        Only processes submissions that:
+        - Have status "failed" (not auto_retry_failed_{x})
+        - Failed more than 30 seconds ago
+        - Have retry_count < max_retries
+        - Are not currently being processed
+        """
+        if not self.is_running:
+            return
+            
+        db = SessionLocal()
+        try:
+            # Get all failed submissions
+            failed = get_submissions(db, status="failed")
+            
+            if not failed:
+                return
+            
+            # Filter submissions that failed more than 30 seconds ago
+            now = datetime.now()
+            retry_delay = timedelta(seconds=30)
+            
+            for submission in failed:
+                # Skip if already being processed
+                if submission.id in self.processing_tasks and not self.processing_tasks[submission.id].done():
+                    continue
+                
+                # Skip if status is auto_retry_failed_{x} (user stopped retry)
+                if submission.status and submission.status.startswith("auto_retry_failed_"):
+                    continue
+                
+                # Check if enough time has passed since last failure
+                if submission.updated_at:
+                    time_since_failure = now - submission.updated_at.replace(tzinfo=None) if submission.updated_at.tzinfo else now - submission.updated_at
+                    if time_since_failure < retry_delay:
+                        continue
+                
+                # Check retry count
+                if submission.retry_count >= self.max_retries:
+                    continue
+                
+                # Check available slots
+                active_count = len([t for t in self.processing_tasks.values() if not t.done()])
+                if active_count >= self.max_concurrent:
+                    break  # No slots available
+                
+                # Reset to pending and retry
+                logger.info(f"Auto-retrying failed submission {submission.id} (attempt {submission.retry_count + 1})")
+                update_submission(
+                    db,
+                    submission.id,
+                    SubmissionUpdate(
+                        status="pending",
+                        retry_count=submission.retry_count + 1,
+                        error_message=f"Auto-retry {submission.retry_count + 1}/{self.max_retries}"
+                    )
+                )
+                
+                # Start processing task
+                task = asyncio.create_task(self._process_submission(submission.id))
+                self.processing_tasks[submission.id] = task
+                task.add_done_callback(lambda t, sid=submission.id: self._cleanup_task(sid))
+                
+        finally:
+            db.close()
+    
+    def stop_auto_retry(self, submission_id: int) -> bool:
+        """
+        Stop automatic retry for a submission.
+        
+        Uses retry_count from database as the stop counter (1-5).
+        Sets status to auto_retry_failed_{retry_count} where retry_count is from DB.
+        When retry_count reaches 5, status becomes "failed" permanently.
+        
+        Args:
+            submission_id: ID of submission to stop auto-retry for
+            
+        Returns:
+            True if successful, False if submission not found
+        """
+        db = SessionLocal()
+        try:
+            submission = get_submission_by_id(db, submission_id)
+            if not submission:
+                return False
+            
+            # Use retry_count from database as the stop counter
+            current_retry_count = submission.retry_count or 0
+            new_retry_count = min(current_retry_count + 1, 5)
+            
+            # If retry_count reaches 5, mark as permanently failed
+            if new_retry_count >= 5:
+                new_status = "failed"
+                error_msg = "Auto-retry stopped permanently by user (max retries reached)"
+            else:
+                new_status = f"auto_retry_failed_{new_retry_count}"
+                error_msg = f"Auto-retry stopped by user (stop count: {new_retry_count}/5)"
+            
+            update_submission(
+                db,
+                submission_id,
+                SubmissionUpdate(
+                    status=new_status,
+                    retry_count=new_retry_count,  # Update retry_count in DB
+                    error_message=error_msg
+                )
+            )
+            
+            logger.info(f"Auto-retry stopped for submission {submission_id}. Retry count: {new_retry_count}, Status: {new_status}")
+            return True
+            
+        finally:
+            db.close()
     
     def _cleanup_task(self, submission_id: int):
         """

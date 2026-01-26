@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 // @ts-ignore - JS module
 import { getSaaSList } from '../api/saas';
 // @ts-ignore - JS module
-import { getDirectories } from '../api/directories';
+import { getDirectories, createDirectory } from '../api/directories';
 // @ts-ignore - JS module
 import { startSubmissionJob, processAllPending } from '../api/jobs';
 import { SkeletonList } from '../components/Skeleton';
@@ -33,6 +33,13 @@ export default function Submissions() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showDirectoryForm, setShowDirectoryForm] = useState(false);
+  const [creatingDirectory, setCreatingDirectory] = useState(false);
+  const [directoryForm, setDirectoryForm] = useState({
+    name: '',
+    url: '',
+    description: '',
+  });
 
   useEffect(() => {
     loadData();
@@ -83,6 +90,58 @@ export default function Submissions() {
     setSuccess(null);
   }
 
+  async function handleCreateDirectory(e: React.FormEvent) {
+    e.preventDefault();
+    
+    if (!directoryForm.name.trim()) {
+      setError('Directory name is required');
+      return;
+    }
+    
+    if (!directoryForm.url.trim()) {
+      setError('Directory URL is required');
+      return;
+    }
+    
+    // Validate URL format
+    try {
+      new URL(directoryForm.url);
+    } catch {
+      setError('Please enter a valid URL (e.g., https://example.com/submit)');
+      return;
+    }
+    
+    setCreatingDirectory(true);
+    setError(null);
+    
+    try {
+      const newDirectory = await createDirectory({
+        name: directoryForm.name.trim(),
+        url: directoryForm.url.trim(),
+        description: directoryForm.description.trim() || null,
+      });
+      
+      // Reload directories list
+      await loadData();
+      
+      // Select the newly created directory
+      setSelectedDirectories((prev) => [...prev, newDirectory.id]);
+      
+      // Reset form and close
+      setDirectoryForm({ name: '', url: '', description: '' });
+      setShowDirectoryForm(false);
+      setSuccess(`Directory "${newDirectory.name}" created successfully!`);
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (error: any) {
+      console.error('Failed to create directory:', error);
+      setError(error.message || 'Failed to create directory');
+    } finally {
+      setCreatingDirectory(false);
+    }
+  }
+  
   async function handleSubmit() {
     if (!selectedSaaS) {
       setError('Please select a SaaS product');
@@ -234,17 +293,103 @@ export default function Submissions() {
           <div className="card animate-fade-in delay-200">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-bold text-white">Select Directories</h2>
-              {directories.length > 0 && (
+              <div className="flex gap-2">
                 <button
-                  onClick={handleSelectAllDirectories}
+                  onClick={() => {
+                    setShowDirectoryForm(!showDirectoryForm);
+                    setError(null);
+                    setDirectoryForm({ name: '', url: '', description: '' });
+                  }}
                   className="btn btn-secondary text-sm"
                 >
-                  {selectedDirectories.length === directories.length
-                    ? 'Deselect All'
-                    : 'Select All'}
+                  {showDirectoryForm ? '✕ Cancel' : '+ Add Directory'}
                 </button>
-              )}
+                {directories.length > 0 && (
+                  <button
+                    onClick={handleSelectAllDirectories}
+                    className="btn btn-secondary text-sm"
+                  >
+                    {selectedDirectories.length === directories.length
+                      ? 'Deselect All'
+                      : 'Select All'}
+                  </button>
+                )}
+              </div>
             </div>
+            
+            {/* Add Directory Form */}
+            {showDirectoryForm && (
+              <div className="mb-6 p-4 bg-[#161b22] border border-[#30363d] rounded-lg animate-fade-in">
+                <h3 className="text-lg font-semibold text-white mb-4">Create New Directory</h3>
+                <form onSubmit={handleCreateDirectory} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-[#8b949e] mb-2">
+                      Directory Name <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={directoryForm.name}
+                      onChange={(e) => setDirectoryForm({ ...directoryForm, name: e.target.value })}
+                      placeholder="e.g., Product Hunt"
+                      className="w-full px-4 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-white placeholder-[#6e7681] focus:outline-none focus:border-[#58a6ff]"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[#8b949e] mb-2">
+                      Submission URL <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="url"
+                      value={directoryForm.url}
+                      onChange={(e) => setDirectoryForm({ ...directoryForm, url: e.target.value })}
+                      placeholder="https://example.com/submit"
+                      className="w-full px-4 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-white placeholder-[#6e7681] focus:outline-none focus:border-[#58a6ff]"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[#8b949e] mb-2">
+                      Description (Optional)
+                    </label>
+                    <textarea
+                      value={directoryForm.description}
+                      onChange={(e) => setDirectoryForm({ ...directoryForm, description: e.target.value })}
+                      placeholder="Brief description of the directory..."
+                      rows={3}
+                      className="w-full px-4 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-white placeholder-[#6e7681] focus:outline-none focus:border-[#58a6ff] resize-none"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      disabled={creatingDirectory}
+                      className="btn btn-primary text-sm px-6 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {creatingDirectory ? (
+                        <span className="flex items-center gap-2">
+                          <span className="animate-spin">⏳</span>
+                          Creating...
+                        </span>
+                      ) : (
+                        'Create Directory'
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDirectoryForm(false);
+                        setDirectoryForm({ name: '', url: '', description: '' });
+                        setError(null);
+                      }}
+                      className="btn btn-secondary text-sm px-6 py-2"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
             {directories.length === 0 ? (
               <p className="text-[#8b949e]">
                 No directories available. Add directories to submit to.

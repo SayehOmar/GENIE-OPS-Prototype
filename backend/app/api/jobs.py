@@ -374,6 +374,40 @@ async def get_workflow_status(request: Request):
     return status
 
 
+@router.post("/workflow/start")
+@limiter.limit(get_rate_limit("jobs"))
+async def start_workflow(request: Request):
+    """
+    Start the workflow manager (enable automatic processing).
+    
+    Starts the scheduler loop that automatically processes pending submissions
+    at regular intervals. If already running, returns current status.
+    """
+    manager = get_workflow_manager()
+    await manager.start()
+    return {
+        "message": "Workflow manager started",
+        "status": manager.get_status()
+    }
+
+
+@router.post("/workflow/stop")
+@limiter.limit(get_rate_limit("jobs"))
+async def stop_workflow(request: Request):
+    """
+    Stop the workflow manager (disable automatic processing).
+    
+    Stops the scheduler loop gracefully, waiting for active tasks to complete.
+    New submissions will not be processed automatically until started again.
+    """
+    manager = get_workflow_manager()
+    await manager.stop()
+    return {
+        "message": "Workflow manager stopped",
+        "status": manager.get_status()
+    }
+
+
 @router.post("/workflow/process-pending")
 @limiter.limit(get_rate_limit("jobs"))
 async def trigger_processing(request: Request):

@@ -229,7 +229,8 @@ async def retry_submission(
     """
     Retry a failed or pending submission.
     
-    Resets the submission status to "pending" and increments the retry count.
+    Resets the submission status to "pending" and resets auto-retry stop count.
+    If status was auto_retry_failed_{x}, it resets to "pending" and clears the stop count.
     The workflow manager will automatically pick up and process the submission
     in the next processing cycle. Clears any previous error messages.
     
@@ -245,28 +246,80 @@ async def retry_submission(
             
     Raises:
         HTTPException: 404 if submission not found
-        HTTPException: 400 if submission status is not "failed" or "pending"
+        HTTPException: 400 if submission status is not "failed", "pending", or "auto_retry_failed_{x}"
     """
     submission = get_submission_by_id(db, submission_id)
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found")
     
-    if submission.status not in ["failed", "pending"]:
+    # Allow retry for failed, pending, or auto_retry_failed_{x} statuses
+    allowed_statuses = ["failed", "pending"]
+    is_auto_retry_stopped = submission.status and submission.status.startswith("auto_retry_failed_")
+    
+    if submission.status not in allowed_statuses and not is_auto_retry_stopped:
         raise HTTPException(
             status_code=400,
             detail=f"Cannot retry submission with status: {submission.status}"
         )
     
-    # Reset to pending and increment retry count
+    # Reset to pending, reset retry count to 0, and clear auto-retry stop status
     update_data = SubmissionUpdate(
         status="pending",
-        retry_count=submission.retry_count + 1,
+        retry_count=0,  # Reset retry_count to 0 on manual retry
         error_message=None
     )
     
     updated_submission = update_submission(db, submission_id, update_data)
     return {
-        "message": "Submission queued for retry",
+        "message": "Submission queued for retry (retry count reset to 0)",
         "submission": updated_submission,
         "retry_count": updated_submission.retry_count
+    }
+
+
+@router.post("/{submission_id}/stop-retry")
+@limiter.limit(get_rate_limit("submissions"))
+async def stop_auto_retry(
+    request: Request,
+    submission_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Stop automatic retry for a failed submission.
+    
+    Sets status to auto_retry_failed_{x} where x increments from 1 to 5.
+    When x reaches 5, status becomes "failed" permanently.
+    This prevents the workflow manager from automatically retrying this submission.
+    
+    Args:
+        submission_id: The unique ID of the submission to stop auto-retry for
+        db: Database session dependency
+        
+    Returns:
+        Dictionary containing:
+            - message: Success message
+            - submission: Updated submission object
+            - auto_retry_stop_count: Current auto-retry stop count (1-5)
+            
+    Raises:
+        HTTPException: 404 if submission not found
+    """
+    from app.workflow.manager import get_workflow_manager
+    
+    manager = get_workflow_manager()
+    success = manager.stop_auto_retry(submission_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    
+    # Get updated submission
+    updated_submission = get_submission_by_id(db, submission_id)
+    
+    # Use retry_count from database as the stop count
+    stop_count = updated_submission.retry_count or 0
+    
+    return {
+        "message": f"Auto-retry stopped (stop count: {stop_count}/5)" if stop_count < 5 else "Auto-retry stopped permanently",
+        "submission": updated_submission,
+        "auto_retry_stop_count": stop_count
     }

@@ -1,6 +1,6 @@
-# GENIE OPS - Submission Processing Scripts
+# GENIE OPS - Utility Scripts
 
-Command-line tools for processing submissions immediately without waiting for the scheduler.
+Command-line tools for processing submissions and maintaining the database.
 
 ## Quick Start
 
@@ -195,6 +195,47 @@ Failed submissions may show:
 - `failed_retry` - Failed but will retry
 - `failed` - Failed permanently
 - `captcha_required` - CAPTCHA detected
+
+## Database Maintenance
+
+### Fix Database Sequences
+
+If you encounter errors like "duplicate key value violates unique constraint" when creating new records, the PostgreSQL sequences may be out of sync. This can happen when data is inserted manually or through migrations.
+
+**Fix all sequences:**
+```bash
+cd backend
+python scripts/fix_sequences.py
+```
+
+This script will:
+- Check all tables (saas, directories, submissions)
+- Reset each sequence to match the maximum ID + 1
+- Display success/failure status for each sequence
+
+**Example output:**
+```
+============================================================
+GENIE OPS - Fix Database Sequences
+============================================================
+
+Database URL: postgresql://postgres:postgres@localhost:5432/genie_ops
+
+Fixing sequences...
+
+Fixing saas...
+  ✓ Fixed saas_id_seq: set to 5
+Fixing directories...
+  ✓ Fixed directories_id_seq: set to 3
+Fixing submissions...
+  ✓ Fixed submissions_id_seq: set to 12
+
+============================================================
+Fixed 3/3 sequences successfully!
+============================================================
+```
+
+**Note:** The `create_directory` function now automatically fixes sequence issues when they occur, so this script is mainly for manual maintenance or bulk fixes.
 
 ## Notes
 
